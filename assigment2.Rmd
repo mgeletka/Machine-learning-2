@@ -1,0 +1,65 @@
+---
+title: "assignment2"
+author: "mgeletka"
+date: "May 7, 2020"
+output: html_document
+---
+
+
+##Introduction
+The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning
+regression methods by comparing:
+
+* regression trees,
+* bagging,
+* random forest,
+*  kernel approaches
+
+```{r}
+library(mice)
+library(GGally)
+library(geosphere)
+library(dplyr)
+
+
+dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
+dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
+```
+
+</br>
+
+####Replacing NA values
+
+You can also embed plots, for example:
+
+```{r}
+set.seed(101) 
+init = mice(dataOriginal, maxit=0) 
+dataComplete <- complete(init)
+```
+</br>
+
+####Deriving new columns
+```{r}
+getNthElemements <- function(lst, n){
+         sapply(lst, `[`, n)
+}
+
+data <- transform(dataComplete,
+                  YearSaled =  as.numeric(getNthElemements(strsplit(as.character(Date), "/"), 3)),
+                  Street1 = factor(getNthElemements(strsplit(as.character(Address), " "), 2)),
+                  Street2 = factor(getNthElemements(strsplit(as.character(Address), " "), 3)))
+
+data <- within(data, Street <- paste(Street1, Street2,sep=' '))
+
+MelbourneCityCentre <- cbind(144.961865, -37.811289)
+data <- mutate(data, DistanceToCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneCityCentre))
+```
+
+</br>
+
+#### Summary of data
+```{r}
+str(data)
+summary(data)
+```
