@@ -1,59 +1,92 @@
 ---
 title: "assignment2"
-author: "mgeletka"
 date: "May 7, 2020"
 output: html_document
 ---
 
 
 ##Introduction
-The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning
-regression methods by comparing:
+The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning regression methods by comparing:
 
 * regression trees,
 * bagging,
 * random forest,
 *  kernel approaches
 
-```{r}
+</br>
+
+##Data pre-processing
+
+```{r, message=FALSE}
 library(mice)
 library(GGally)
 library(geosphere)
 library(dplyr)
+library(VIM)
 
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
-dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
+
 ```
 
-</br>
+
+```{r, echo=FALSE}
+# Fix date format
+dataOriginal$Date<-as.Date(dataOriginal$Date, "%d/%m/%Y")
+```
+
+### NA values
+Let's vizualise NA values
+```{r}
+aggr(dataOriginal,delimiter=NULL, plot=TRUE)
+```
+
+####Discard NA values of price
+```{r}
+dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
+```
 
 ####Replacing NA values
 
 You can also embed plots, for example:
 
 ```{r}
+#we don't need to do that apriori, but only if there will be any technique that doesn't work with NA 
 set.seed(101) 
 init = mice(dataOriginal, maxit=0) 
 dataComplete <- complete(init)
 ```
 </br>
 
-####Deriving new columns
+###The target variable
+
+####Distribution
 ```{r}
-getNthElemements <- function(lst, n){
-         sapply(lst, `[`, n)
-}
+hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
+```
 
-data <- transform(dataComplete,
-                  YearSaled =  as.numeric(getNthElemements(strsplit(as.character(Date), "/"), 3)),
-                  Street1 = factor(getNthElemements(strsplit(as.character(Address), " "), 2)),
-                  Street2 = factor(getNthElemements(strsplit(as.character(Address), " "), 3)))
+#### Logarithmic distribution
+```{r}
+hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
+```
 
-data <- within(data, Street <- paste(Street1, Street2,sep=' '))
+### Aggregating attributes and deriving new columns
+```{r}
 
-MelbourneCityCentre <- cbind(144.961865, -37.811289)
-data <- mutate(data, DistanceToCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneCityCentre))
+# Add year column and street column
+addresses<-gsub("[[:punct:]]", "", dataOriginal$Address)
+addresses<-gsub("[[:digit:]]", "", addresses)
+
+data<-mutate(dataOriginal, Street=addresses, YearSaled=year(dataOriginal$Date))
+
+# Add season column
+data<-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, "Spring",ifelse(month(data$Date) %in% 6:8, "summer", ifelse(month(data$Date) %in% 9:11, "Autumn","Winter"))))
+
+# Remove unuseful columns
+data<-select(data,-c(Address,Date))
+  
+#MelbourneCityCentre <- cbind(144.961865, -37.811289)
+#data <- mutate(data, DistanceToCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneCityCentre))
 ```
 
 </br>
