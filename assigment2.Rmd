@@ -84,9 +84,17 @@ data<-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, "Spring",ifelse(mont
 
 # Remove unuseful columns
 data<-select(data,-c(Address,Date))
-  
-#MelbourneCityCentre <- cbind(144.961865, -37.811289)
-#data <- mutate(data, DistanceToCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneCityCentre))
+
+# Add a column with the distance to the center of the bay
+MelbourneBayCentre <- cbind(144.783832, -38.104275)
+data <- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
+
+# Add a column with the distance to the airports
+MelbourneAirport<-c( 144.841802,-37.670149)
+AvalonAirport<- c( 144.473152,-38.027377)
+EssendonAirport<- c( 144.902035,-37.726376)
+MoorabbinAirport <- c( 145.100306,-37.979454)
+data<-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
 ```
 
 </br>
