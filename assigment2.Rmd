@@ -24,6 +24,12 @@ library(geosphere)
 library(dplyr)
 library(VIM)
 library(lubridate)
+library(caTools)
+library(e1071)
+library(Metrics)
+library(caret)
+
+
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
 
@@ -74,10 +80,10 @@ hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)", brea
 ```{r}
 
 # Add year column and street column
-addresses<-gsub("[[:punct:]]", "", dataOriginal$Address)
+addresses<-gsub("[[:punct:]]", "", dataComplete$Address)
 addresses<-gsub("[[:digit:]]", "", addresses)
 
-data<-mutate(dataOriginal, Street=addresses, YearSaled=year(dataOriginal$Date))
+data<-mutate(dataComplete, Street=addresses, YearSaled=year(dataComplete$Date))
 
 # Add season column
 data<-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, "Spring",ifelse(month(data$Date) %in% 6:8, "summer", ifelse(month(data$Date) %in% 9:11, "Autumn","Winter"))))
@@ -104,3 +110,52 @@ data<-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude),
 str(data)
 summary(data)
 ```
+
+</br>
+
+####Spiltting the data
+```{r}
+set.seed(123)
+data$Street <- factor(data$Street)
+data$Season <- factor(data$Season)
+split = sample.split(data, SplitRatio = 0.8)
+traindDf = subset(data, split == TRUE)
+testDf = subset(data, split == FALSE)
+```
+
+</br>
+
+####Scalling values
+```{r}
+traindDfWithoutPrice <- traindDf[-4]
+testDfWithoutPrice <- testDf[-4]
+
+str(traindDf)
+str(testDf)
+
+# ind <- sapply(traindDfWithoutPrice, is.numeric)
+# traindDfWithoutPrice[ind] <- lapply(traindDfWithoutPrice[ind], scale)
+# 
+# testDfWithoutPrice$Price <- scale(testDfWithoutPrice$Price)
+# testDfWithoutPrice[ind] <- lapply(testDfWithoutPrice[ind], scale)
+```
+
+</br>
+
+####Support Vector Machine (SVM)
+```{r}
+linearSVMclassifier <- svm(Price ~ ., traindDf, kernel="linear")
+```
+
+####Confusion Matrix of the classifier
+```{r}
+summary(linearSVMclassifier)
+predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
+
+# summary(predictedPrice)
+# length(testDf$Price)
+postResample(testDf$Price, predictedPrice)
+
+```
+
+
