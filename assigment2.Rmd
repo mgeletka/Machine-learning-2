@@ -23,7 +23,7 @@ library(GGally)
 library(geosphere)
 library(dplyr)
 library(VIM)
-
+library(lubridate)
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
 
@@ -62,12 +62,12 @@ dataComplete <- complete(init)
 
 ####Distribution
 ```{r}
-hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
+hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$", breaks=seq(0,max(dataOriginal$Price),l=100))
 ```
 
 #### Logarithmic distribution
 ```{r}
-hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
+hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)", breaks=seq(log10(min(dataOriginal$Price)),log10(max(dataOriginal$Price)),l=100))
 ```
 
 ### Aggregating attributes and deriving new columns
