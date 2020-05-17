@@ -201,6 +201,13 @@ library(geosphere)
 library(dplyr)
 library(VIM)
 library(lubridate)
+library(caTools)
+library(e1071)
+library(Metrics)
+library(caret)
+library(kernlab)
+
+
 
 dataOriginal &lt;- read.csv(&quot;Melbourne_housing_FULL.csv&quot;, header = TRUE, na.strings=c(&quot;&quot;, &quot;NA&quot;, &quot;#N/A&quot;))</code></pre>
 <div id="na-values" class="section level3">
@@ -237,57 +244,70 @@ dataComplete &lt;- complete(init)</code></pre>
 </div>
 <div id="aggregating-attributes-and-deriving-new-columns" class="section level3">
 <h3>Aggregating attributes and deriving new columns</h3>
-<pre class="r"><code># Add year column and street column
-addresses&lt;-gsub(&quot;[[:punct:]]&quot;, &quot;&quot;, dataOriginal$Address)
-addresses&lt;-gsub(&quot;[[:digit:]]&quot;, &quot;&quot;, addresses)
+<pre class="r"><code>aggregetaData &lt;- function(data) {
+  
+  
+   # Add year column and street column
+  addresses&lt;-gsub(&quot;[[:punct:]]&quot;, &quot;&quot;, data$Address)
+  addresses&lt;-gsub(&quot;[[:digit:]]&quot;, &quot;&quot;, addresses)
+  
+  
+  newData &lt;- mutate(data, Street=addresses, YearSaled=year(data$Date))
+  
+  # Add season column
+  newData &lt;- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, &quot;Spring&quot;,ifelse(month(newData$Date) %in% 6:8, &quot;summer&quot;, ifelse(month(newData$Date) %in% 9:11, &quot;Autumn&quot;,&quot;Winter&quot;))))
+  
+  # Remove unuseful columns
+  newData&lt;-select(newData,-c(Address,Date))
+  
+  # Add a column with the distance to the center of the bay
+  MelbourneBayCentre &lt;- cbind(144.783832, -38.104275)
+  data &lt;- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
+  
+  # Make from string variables factor
+  newData$Street &lt;- factor(newData$Street)
+  newData$Season &lt;- factor(newData$Season)
+  
+  # Add a column with the distance to the airports
+  MelbourneAirport&lt;-c( 144.841802,-37.670149)
+  AvalonAirport&lt;- c( 144.473152,-38.027377)
+  EssendonAirport&lt;- c( 144.902035,-37.726376)
+  MoorabbinAirport &lt;- c( 145.100306,-37.979454)
+  newData&lt;-mutate(newData,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
+  
+  return(newData)
+}
 
-data&lt;-mutate(dataOriginal, Street=addresses, YearSaled=year(dataOriginal$Date))
-
-# Add season column
-data&lt;-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, &quot;Spring&quot;,ifelse(month(data$Date) %in% 6:8, &quot;summer&quot;, ifelse(month(data$Date) %in% 9:11, &quot;Autumn&quot;,&quot;Winter&quot;))))
-
-# Remove unuseful columns
-data&lt;-select(data,-c(Address,Date))
-
-# Add a column with the distance to the center of the bay
-MelbourneBayCentre &lt;- cbind(144.783832, -38.104275)
-data &lt;- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
-
-# Add a column with the distance to the airports
-MelbourneAirport&lt;-c( 144.841802,-37.670149)
-AvalonAirport&lt;- c( 144.473152,-38.027377)
-EssendonAirport&lt;- c( 144.902035,-37.726376)
-MoorabbinAirport &lt;- c( 145.100306,-37.979454)
-data&lt;-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km</code></pre>
+data &lt;- aggregetaData(dataOriginal)
+dataComplete &lt;- aggregetaData(dataComplete)</code></pre>
 <p></br></p>
 <div id="summary-of-data" class="section level4">
 <h4>Summary of data</h4>
 <pre class="r"><code>str(data)</code></pre>
-<pre><code>## 'data.frame':    27247 obs. of  24 variables:
-##  $ Suburb             : Factor w/ 351 levels &quot;Abbotsford&quot;,&quot;Aberfeldie&quot;,..: 1 1 1 1 1 1 1 1 1 1 ...
-##  $ Rooms              : int  2 2 3 3 4 2 3 2 3 2 ...
-##  $ Type               : Factor w/ 3 levels &quot;h&quot;,&quot;t&quot;,&quot;u&quot;: 1 1 1 1 1 1 1 1 1 2 ...
-##  $ Price              : int  1480000 1035000 1465000 850000 1600000 941000 1876000 1636000 1000000 745000 ...
-##  $ Method             : Factor w/ 9 levels &quot;PI&quot;,&quot;PN&quot;,&quot;S&quot;,..: 3 3 6 1 8 3 3 3 3 3 ...
-##  $ SellerG            : Factor w/ 388 levels &quot;@Realty&quot;,&quot;A&quot;,..: 34 34 34 34 246 171 246 246 171 171 ...
-##  $ Distance           : num  2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 ...
-##  $ Postcode           : int  3067 3067 3067 3067 3067 3067 3067 3067 3067 3067 ...
-##  $ Bedroom2           : int  2 2 3 3 3 2 4 2 NA NA ...
-##  $ Bathroom           : int  1 1 2 2 1 1 2 1 NA NA ...
-##  $ Car                : int  1 0 0 1 2 0 0 2 NA NA ...
-##  $ Landsize           : int  202 156 134 94 120 181 245 256 NA NA ...
-##  $ BuildingArea       : num  NA 79 150 NA 142 NA 210 107 NA NA ...
-##  $ YearBuilt          : int  NA 1900 1900 NA 2014 NA 1910 1890 NA NA ...
-##  $ CouncilArea        : Factor w/ 33 levels &quot;Banyule City Council&quot;,..: 32 32 32 32 32 32 32 32 32 32 ...
-##  $ Lattitude          : num  -37.8 -37.8 -37.8 -37.8 -37.8 ...
-##  $ Longtitude         : num  145 145 145 145 145 ...
-##  $ Regionname         : Factor w/ 8 levels &quot;Eastern Metropolitan&quot;,..: 3 3 3 3 3 3 3 3 3 3 ...
-##  $ Propertycount      : int  4019 4019 4019 4019 4019 4019 4019 4019 4019 4019 ...
-##  $ Street             : chr  &quot; Turner St&quot; &quot; Bloomburg St&quot; &quot; Charles St&quot; &quot; Federation La&quot; ...
-##  $ YearSaled          : num  2016 2016 2017 2017 2016 ...
-##  $ Season             : chr  &quot;Winter&quot; &quot;Winter&quot; &quot;Spring&quot; &quot;Spring&quot; ...
-##  $ DistanceToBayCentre: num  38.7 37.7 37.6 38.9 37.8 ...
-##  $ DistanceToAirports : num  11.8 12.1 12.3 11.5 12.1 ...</code></pre>
+<pre><code>## 'data.frame':    27247 obs. of  23 variables:
+##  $ Suburb            : Factor w/ 351 levels &quot;Abbotsford&quot;,&quot;Aberfeldie&quot;,..: 1 1 1 1 1 1 1 1 1 1 ...
+##  $ Rooms             : int  2 2 3 3 4 2 3 2 3 2 ...
+##  $ Type              : Factor w/ 3 levels &quot;h&quot;,&quot;t&quot;,&quot;u&quot;: 1 1 1 1 1 1 1 1 1 2 ...
+##  $ Price             : int  1480000 1035000 1465000 850000 1600000 941000 1876000 1636000 1000000 745000 ...
+##  $ Method            : Factor w/ 9 levels &quot;PI&quot;,&quot;PN&quot;,&quot;S&quot;,..: 3 3 6 1 8 3 3 3 3 3 ...
+##  $ SellerG           : Factor w/ 388 levels &quot;@Realty&quot;,&quot;A&quot;,..: 34 34 34 34 246 171 246 246 171 171 ...
+##  $ Distance          : num  2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 2.5 ...
+##  $ Postcode          : int  3067 3067 3067 3067 3067 3067 3067 3067 3067 3067 ...
+##  $ Bedroom2          : int  2 2 3 3 3 2 4 2 NA NA ...
+##  $ Bathroom          : int  1 1 2 2 1 1 2 1 NA NA ...
+##  $ Car               : int  1 0 0 1 2 0 0 2 NA NA ...
+##  $ Landsize          : int  202 156 134 94 120 181 245 256 NA NA ...
+##  $ BuildingArea      : num  NA 79 150 NA 142 NA 210 107 NA NA ...
+##  $ YearBuilt         : int  NA 1900 1900 NA 2014 NA 1910 1890 NA NA ...
+##  $ CouncilArea       : Factor w/ 33 levels &quot;Banyule City Council&quot;,..: 32 32 32 32 32 32 32 32 32 32 ...
+##  $ Lattitude         : num  -37.8 -37.8 -37.8 -37.8 -37.8 ...
+##  $ Longtitude        : num  145 145 145 145 145 ...
+##  $ Regionname        : Factor w/ 8 levels &quot;Eastern Metropolitan&quot;,..: 3 3 3 3 3 3 3 3 3 3 ...
+##  $ Propertycount     : int  4019 4019 4019 4019 4019 4019 4019 4019 4019 4019 ...
+##  $ Street            : Factor w/ 10555 levels &quot;  Somers Av&quot;,..: 8548 976 1645 3041 9968 1645 9282 1645 4933 9897 ...
+##  $ YearSaled         : num  2016 2016 2017 2017 2016 ...
+##  $ Season            : Factor w/ 4 levels &quot;Autumn&quot;,&quot;Spring&quot;,..: 4 4 2 2 3 2 2 1 1 1 ...
+##  $ DistanceToAirports: num  11.8 12.1 12.3 11.5 12.1 ...</code></pre>
 <pre class="r"><code>summary(data)</code></pre>
 <pre><code>##             Suburb          Rooms        Type          Price         
 ##  Reservoir     :  727   Min.   : 1.000   h:18472   Min.   :   85000  
@@ -329,23 +349,470 @@ data&lt;-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitud
 ##  3rd Qu.:-37.75   3rd Qu.:145.1   South-Eastern Metropolitan:1341  
 ##  Max.   :-37.40   Max.   :145.5   (Other)                   : 428  
 ##  NA's   :6254     NA's   :6254    NA's                      :   3  
-##  Propertycount      Street            YearSaled       Season         
-##  Min.   :   83   Length:27247       Min.   :2016   Length:27247      
-##  1st Qu.: 4294   Class :character   1st Qu.:2016   Class :character  
-##  Median : 6567   Mode  :character   Median :2017   Mode  :character  
-##  Mean   : 7567                      Mean   :2017                     
-##  3rd Qu.:10412                      3rd Qu.:2017                     
-##  Max.   :21650                      Max.   :2018                     
-##  NA's   :3                                                           
-##  DistanceToBayCentre DistanceToAirports
-##  Min.   :18.95       Min.   : 0.492    
-##  1st Qu.:34.11       1st Qu.: 7.600    
-##  Median :39.40       Median :11.265    
-##  Mean   :39.90       Mean   :11.751    
-##  3rd Qu.:44.95       3rd Qu.:15.451    
-##  Max.   :82.74       Max.   :52.633    
-##  NA's   :6254        NA's   :6254</code></pre>
+##  Propertycount             Street        YearSaled       Season    
+##  Min.   :   83    Barkly St   :  121   Min.   :2016   Autumn:9745  
+##  1st Qu.: 4294    High St     :   99   1st Qu.:2016   Spring:6188  
+##  Median : 6567    Dandenong Rd:   65   Median :2017   summer:7108  
+##  Mean   : 7567    Toorak Rd   :   65   Mean   :2017   Winter:4206  
+##  3rd Qu.:10412    Victoria St :   64   3rd Qu.:2017                
+##  Max.   :21650    Charles St  :   60   Max.   :2018                
+##  NA's   :3       (Other)      :26773                               
+##  DistanceToAirports
+##  Min.   : 0.492    
+##  1st Qu.: 7.600    
+##  Median :11.265    
+##  Mean   :11.751    
+##  3rd Qu.:15.451    
+##  Max.   :52.633    
+##  NA's   :6254</code></pre>
+<p></br></p>
 </div>
+<div id="small-dataset" class="section level4">
+<h4>Small dataset</h4>
+<p>We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.</p>
+<pre class="r"><code>set.seed(123)
+
+split = sample.split(dataComplete, SplitRatio = 0.01)
+smallDataset = subset(dataComplete, split == TRUE)
+
+split = sample.split(data, SplitRatio = 0.7)
+smallDatasetTrain = subset(smallDataset, split == TRUE)
+smallDatasetTest = subset(smallDataset, split == FALSE)
+
+traindDfWithoutPrice &lt;- smallDatasetTrain[-4]
+testDfWithoutPrice &lt;- smallDatasetTest[-4]</code></pre>
+<p></br></p>
+<p></br></p>
+</div>
+</div>
+</div>
+<div id="support-vector-machine-svm" class="section level2">
+<h2>Support Vector Machine (SVM)</h2>
+<p>Although the method ksvm does not fail when given NA value, internally is omitting them and learning anything from them. So with SVM, we used the complete dataset created by data imputation.</p>
+<div id="section" class="section level3 tabset tabset-fade tabset-pills">
+<h3></h3>
+<p>Now we tried a couple of SVM with a different model on all columns of the data. We perform 10-fold cross-validation to see the training error and cross-validation error of each model.</p>
+<div id="linear-kernel-classifier-of-the-classifier" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Linear kernel classifier of the classifier</h4>
+<pre class="r"><code>linearSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;vanilladot&quot;, cross = 10, scaled = TRUE)</code></pre>
+<pre><code>##  Setting default kernel parameters</code></pre>
+<pre class="r"><code>linearSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Linear (vanilla) kernel function. 
+## 
+## Number of Support Vectors : 669 
+## 
+## Objective Function Value : -75.044 
+## Training error : 0.091376 
+## Cross validation error : 201159394763</code></pre>
+<pre class="r"><code>predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 3.954311e+05 5.721490e-01 2.740153e+05</code></pre>
+</div>
+<div id="anova-kernel-classifier-of-the-classifier" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Anova kernel classifier of the classifier</h4>
+<pre class="r"><code>anovaSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;anovadot&quot;, cross = 10, scaled = TRUE)</code></pre>
+<pre><code>##  Setting default kernel parameters</code></pre>
+<pre class="r"><code>anovaSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Anova RBF kernel function. 
+##  Hyperparameter : sigma =  1 degree =  1 
+## 
+## Number of Support Vectors : 664 
+## 
+## Objective Function Value : -119.696 
+## Training error : 4.082001 
+## Cross validation error : 2.65699e+21</code></pre>
+<pre class="r"><code>predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 4.718710e+10 3.555115e-02 4.718710e+10</code></pre>
+</div>
+<div id="radial-basis-kernel-classifier-of-the-classifier" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Radial Basis kernel classifier of the classifier</h4>
+<pre class="r"><code>radialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;rbfdot&quot;, cross = 10, scaled = TRUE)
+radialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Gaussian Radial Basis kernel function. 
+##  Hyperparameter : sigma =  0.0307069828768993 
+## 
+## Number of Support Vectors : 612 
+## 
+## Objective Function Value : -171.4964 
+## Training error : 0.273658 
+## Cross validation error : 195584238906</code></pre>
+<pre class="r"><code>predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 3.086201e+05 6.802870e-01 2.019444e+05</code></pre>
+</div>
+<div id="polynomial-kernel-classifier-of-degree-3-the-classifier" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Polynomial kernel classifier of degree 3 the classifier</h4>
+<pre class="r"><code>polynomialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;polydot&quot;, kpar = list(degree=3), cross = 10, scaled = TRUE)
+polynomialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Polynomial kernel function. 
+##  Hyperparameters : degree =  3  scale =  1  offset =  1 
+## 
+## Number of Support Vectors : 674 
+## 
+## Objective Function Value : -0.0325 
+## Training error : 0.008752 
+## Cross validation error : 231170499716</code></pre>
+<pre class="r"><code>predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 5.657535e+05 3.699066e-01 2.815554e+05</code></pre>
+</div>
+<div id="polynomial-kernel-classifier-of-degree-5" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Polynomial kernel classifier of degree 5</h4>
+<pre class="r"><code>polynomialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;polydot&quot;, kpar = list(degree=5), cross = 10, scaled = TRUE)
+polynomialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Polynomial kernel function. 
+##  Hyperparameters : degree =  5  scale =  1  offset =  1 
+## 
+## Number of Support Vectors : 709 
+## 
+## Objective Function Value : -2e-04 
+## Training error : 0.009169 
+## Cross validation error : 500757854821</code></pre>
+<pre class="r"><code>predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 2.768466e+06 2.715992e-02 4.855340e+05</code></pre>
+</div>
+<div id="polynomial-kernel-classifier-of-degree-8" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Polynomial kernel classifier of degree 8</h4>
+<pre class="r"><code>polynomialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;polydot&quot;, kpar = list(degree=8), cross = 10, scaled = TRUE)
+polynomialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Polynomial kernel function. 
+##  Hyperparameters : degree =  8  scale =  1  offset =  1 
+## 
+## Number of Support Vectors : 755 
+## 
+## Objective Function Value : 0 
+## Training error : 0.009474 
+## Cross validation error : 1.678229e+13</code></pre>
+<pre class="r"><code>predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 4.172702e+07 2.036218e-03 2.679655e+06</code></pre>
+</div>
+<div id="laplacian-kernel-classifier-of-the-classifier" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Laplacian kernel classifier of the classifier</h4>
+<pre class="r"><code>laplacianSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;laplacedot&quot;, cross = 10, scaled = TRUE)
+laplacianSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Laplace kernel function. 
+##  Hyperparameter : sigma =  0.0310700422425272 
+## 
+## Number of Support Vectors : 625 
+## 
+## Objective Function Value : -256.6768 
+## Training error : 0.450764 
+## Cross validation error : 249374600715</code></pre>
+<pre class="r"><code>predictedPrice = predict(laplacianSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 3.510918e+05 6.367975e-01 2.237100e+05</code></pre>
+</div>
+<div id="bessel-kernel-classifier-of-the-classifier" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Bessel kernel classifier of the classifier</h4>
+<pre class="r"><code>besselSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;besseldot&quot;, cross = 10, scaled = TRUE)</code></pre>
+<pre><code>##  Setting default kernel parameters</code></pre>
+<pre class="r"><code>besselSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Bessel kernel function. 
+##  Hyperparameter : sigma =  1 order =  1 degree =  1 
+## 
+## Number of Support Vectors : 812 
+## 
+## Objective Function Value : -3718.814 
+## Training error : 164.889512 
+## Cross validation error : 6.925659e+13</code></pre>
+<pre class="r"><code>predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 8.357083e+06 1.000105e-01 6.130677e+06</code></pre>
+</div>
+</div>
+<div id="removing-columns-with-too-much-na-values-in-original-data" class="section level3">
+<h3>Removing columns with too much NA values in original data</h3>
+</div>
+<div id="section-1" class="section level3 tabset tabset-fade tabset-pills">
+<h3></h3>
+<p>Now we try to remove columns which have many NA values. So we remove the columns Bedroom2, Car, YearBuild and lattitude and longtitide. Then we perform 10-fold cross validation to see the training error and cross validation error of each model on those reduced dataset.</p>
+<pre class="r"><code>smallDatasetTrain &lt;- smallDatasetTrain[-c(9,11,14,16,17)]
+smallDatasetTest &lt;- smallDatasetTest[-c(9,11,14,16,17)]</code></pre>
+<div id="linear-kernel-classifier-of-the-classifier-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Linear kernel classifier of the classifier</h4>
+<pre class="r"><code>linearSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;vanilladot&quot;, cross = 10, scaled = TRUE)</code></pre>
+<pre><code>##  Setting default kernel parameters</code></pre>
+<pre class="r"><code>linearSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Linear (vanilla) kernel function. 
+## 
+## Number of Support Vectors : 687 
+## 
+## Objective Function Value : -76.0913 
+## Training error : 0.091563 
+## Cross validation error : 199339646542</code></pre>
+<pre class="r"><code>predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 3.917640e+05 5.702952e-01 2.704368e+05</code></pre>
+</div>
+<div id="anova-kernel-classifier-of-the-classifier-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Anova kernel classifier of the classifier</h4>
+<pre class="r"><code>anovaSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;anovadot&quot;, cross = 10, scaled = TRUE)</code></pre>
+<pre><code>##  Setting default kernel parameters</code></pre>
+<pre class="r"><code>anovaSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Anova RBF kernel function. 
+##  Hyperparameter : sigma =  1 degree =  1 
+## 
+## Number of Support Vectors : 652 
+## 
+## Objective Function Value : -125.4504 
+## Training error : 4.574684 
+## Cross validation error : 3.106808e+21</code></pre>
+<pre class="r"><code>predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 7.718799e+10 7.073753e-02 7.718799e+10</code></pre>
+</div>
+<div id="radial-basis-kernel-classifier-of-the-classifier-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Radial Basis kernel classifier of the classifier</h4>
+<pre class="r"><code>radialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;rbfdot&quot;, cross = 10, scaled = TRUE)
+radialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Gaussian Radial Basis kernel function. 
+##  Hyperparameter : sigma =  0.042345611532709 
+## 
+## Number of Support Vectors : 600 
+## 
+## Objective Function Value : -162.7926 
+## Training error : 0.256809 
+## Cross validation error : 185307502868</code></pre>
+<pre class="r"><code>predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 2.975373e+05 7.030621e-01 2.019452e+05</code></pre>
+</div>
+<div id="polynomial-kernel-classifier-of-degree-3-the-classifier-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Polynomial kernel classifier of degree 3 the classifier</h4>
+<pre class="r"><code>polynomialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;polydot&quot;, kpar = list(degree=3), cross = 10, scaled = TRUE)
+polynomialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Polynomial kernel function. 
+##  Hyperparameters : degree =  3  scale =  1  offset =  1 
+## 
+## Number of Support Vectors : 675 
+## 
+## Objective Function Value : -0.0647 
+## Training error : 0.008812 
+## Cross validation error : 225364703275</code></pre>
+<pre class="r"><code>predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 5.507809e+05 3.777465e-01 2.758755e+05</code></pre>
+</div>
+<div id="polynomial-kernel-classifier-of-degree-5-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Polynomial kernel classifier of degree 5</h4>
+<pre class="r"><code>polynomialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;polydot&quot;, kpar = list(degree=5), cross = 10, scaled = TRUE)
+polynomialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Polynomial kernel function. 
+##  Hyperparameters : degree =  5  scale =  1  offset =  1 
+## 
+## Number of Support Vectors : 696 
+## 
+## Objective Function Value : -5e-04 
+## Training error : 0.009042 
+## Cross validation error : 1.039189e+12</code></pre>
+<pre class="r"><code>predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 3.026529e+06 2.089924e-02 4.968694e+05</code></pre>
+</div>
+<div id="polynomial-kernel-classifier-of-degree-8-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Polynomial kernel classifier of degree 8</h4>
+<pre class="r"><code>polynomialSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;polydot&quot;, kpar = list(degree=8), cross = 10, scaled = TRUE)
+polynomialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Polynomial kernel function. 
+##  Hyperparameters : degree =  8  scale =  1  offset =  1 
+## 
+## Number of Support Vectors : 736 
+## 
+## Objective Function Value : 0 
+## Training error : 0.00929 
+## Cross validation error : 1.652502e+14</code></pre>
+<pre class="r"><code>predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 6.176149e+07 1.811527e-03 3.828646e+06</code></pre>
+</div>
+<div id="laplacian-kernel-classifier-of-the-classifier-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Laplacian kernel classifier of the classifier</h4>
+<pre class="r"><code>laplacianSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;laplacedot&quot;, cross = 10, scaled = TRUE)
+laplacianSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Laplace kernel function. 
+##  Hyperparameter : sigma =  0.0400767751209496 
+## 
+## Number of Support Vectors : 627 
+## 
+## Objective Function Value : -244.7946 
+## Training error : 0.416966 
+## Cross validation error : 235280509658</code></pre>
+<pre class="r"><code>predictedPrice = predict(laplacianSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 3.385912e+05 6.583842e-01 2.196185e+05</code></pre>
+</div>
+<div id="bessel-kernel-classifier-of-the-classifier-1" class="section level4 tabset tabset-fade tabset-pills">
+<h4>Bessel kernel classifier of the classifier</h4>
+<pre class="r"><code>besselSVMclassifier &lt;- ksvm(Price ~ ., smallDatasetTrain, kernel=&quot;besseldot&quot;, cross = 10, scaled = TRUE)</code></pre>
+<pre><code>##  Setting default kernel parameters</code></pre>
+<pre class="r"><code>besselSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Bessel kernel function. 
+##  Hyperparameter : sigma =  1 order =  1 degree =  1 
+## 
+## Number of Support Vectors : 779 
+## 
+## Objective Function Value : -929.4285 
+## Training error : 17.480538 
+## Cross validation error : 8.070951e+12</code></pre>
+<pre class="r"><code>predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 2.772203e+06 9.176590e-05 1.727810e+06</code></pre>
+<p></br></p>
+</div>
+</div>
+<div id="training-final-svm-model" class="section level3">
+<h3>Training final SVM model</h3>
+<p>Based od root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data with column with many NA values. Therofore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.</p>
+<div id="preparing-data-for-final-svm-model" class="section level4">
+<h4>Preparing data for final SVM model</h4>
+<pre class="r"><code>split = sample.split(data, SplitRatio = 0.5)
+trainDf = subset(dataComplete, split == TRUE)
+testDf = subset(dataComplete, split == FALSE)
+
+trainDf &lt;- trainDf[-c(9,11,14,16,17)]
+testDf &lt;- testDf[-c(9,11,14,16,17)]
+
+traindDfWithoutPrice &lt;- trainDf[-4]
+testDfWithoutPrice &lt;- testDf[-4]</code></pre>
+</div>
+</div>
+<div id="training-the-model" class="section level3">
+<h3>Training the model</h3>
+<pre class="r"><code>radialSVMclassifier &lt;- ksvm(Price ~ ., trainDf, kernel=&quot;rbfdot&quot;, cross = 10, scaled = TRUE)
+radialSVMclassifier</code></pre>
+<pre><code>## Support Vector Machine object of class &quot;ksvm&quot; 
+## 
+## SV type: eps-svr  (regression) 
+##  parameter : epsilon = 0.1  cost C = 1 
+## 
+## Gaussian Radial Basis kernel function. 
+##  Hyperparameter : sigma =  0.0462213333263195 
+## 
+## Number of Support Vectors : 8796 
+## 
+## Objective Function Value : -2154.3 
+## Training error : 0.203016 
+## Cross validation error : 1.10962e+11</code></pre>
+<pre class="r"><code>predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(testDf$Price, predictedPrice)
+error</code></pre>
+<pre><code>##         RMSE     Rsquared          MAE 
+## 333819.28859      0.74169 183846.64739</code></pre>
 </div>
 </div>
 

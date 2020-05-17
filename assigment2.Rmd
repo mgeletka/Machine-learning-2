@@ -28,6 +28,7 @@ library(caTools)
 library(e1071)
 library(Metrics)
 library(caret)
+library(kernlab)
 
 
 
@@ -78,29 +79,42 @@ hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)", brea
 
 ### Aggregating attributes and deriving new columns
 ```{r}
+aggregetaData <- function(data) {
+  
+  
+   # Add year column and street column
+  addresses<-gsub("[[:punct:]]", "", data$Address)
+  addresses<-gsub("[[:digit:]]", "", addresses)
+  
+  
+  newData <- mutate(data, Street=addresses, YearSaled=year(data$Date))
+  
+  # Add season column
+  newData <- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, "Spring",ifelse(month(newData$Date) %in% 6:8, "summer", ifelse(month(newData$Date) %in% 9:11, "Autumn","Winter"))))
+  
+  # Remove unuseful columns
+  newData<-select(newData,-c(Address,Date))
+  
+  # Add a column with the distance to the center of the bay
+  MelbourneBayCentre <- cbind(144.783832, -38.104275)
+  data <- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
+  
+  # Make from string variables factor
+  newData$Street <- factor(newData$Street)
+  newData$Season <- factor(newData$Season)
+  
+  # Add a column with the distance to the airports
+  MelbourneAirport<-c( 144.841802,-37.670149)
+  AvalonAirport<- c( 144.473152,-38.027377)
+  EssendonAirport<- c( 144.902035,-37.726376)
+  MoorabbinAirport <- c( 145.100306,-37.979454)
+  newData<-mutate(newData,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
+  
+  return(newData)
+}
 
-# Add year column and street column
-addresses<-gsub("[[:punct:]]", "", dataComplete$Address)
-addresses<-gsub("[[:digit:]]", "", addresses)
-
-data<-mutate(dataComplete, Street=addresses, YearSaled=year(dataComplete$Date))
-
-# Add season column
-data<-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, "Spring",ifelse(month(data$Date) %in% 6:8, "summer", ifelse(month(data$Date) %in% 9:11, "Autumn","Winter"))))
-
-# Remove unuseful columns
-data<-select(data,-c(Address,Date))
-
-# Add a column with the distance to the center of the bay
-MelbourneBayCentre <- cbind(144.783832, -38.104275)
-data <- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
-
-# Add a column with the distance to the airports
-MelbourneAirport<-c( 144.841802,-37.670149)
-AvalonAirport<- c( 144.473152,-38.027377)
-EssendonAirport<- c( 144.902035,-37.726376)
-MoorabbinAirport <- c( 145.100306,-37.979454)
-data<-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
+data <- aggregetaData(dataOriginal)
+dataComplete <- aggregetaData(dataComplete)
 ```
 
 </br>
@@ -113,49 +127,198 @@ summary(data)
 
 </br>
 
-####Spiltting the data
+####Small dataset
+We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.
 ```{r}
 set.seed(123)
-data$Street <- factor(data$Street)
-data$Season <- factor(data$Season)
-split = sample.split(data, SplitRatio = 0.8)
-traindDf = subset(data, split == TRUE)
-testDf = subset(data, split == FALSE)
+
+split = sample.split(dataComplete, SplitRatio = 0.01)
+smallDataset = subset(dataComplete, split == TRUE)
+
+split = sample.split(data, SplitRatio = 0.7)
+smallDatasetTrain = subset(smallDataset, split == TRUE)
+smallDatasetTest = subset(smallDataset, split == FALSE)
+
+traindDfWithoutPrice <- smallDatasetTrain[-4]
+testDfWithoutPrice <- smallDatasetTest[-4]
 ```
 
 </br>
 
-####Scalling values
-```{r}
-traindDfWithoutPrice <- traindDf[-4]
-testDfWithoutPrice <- testDf[-4]
-
-str(traindDf)
-str(testDf)
-
-# ind <- sapply(traindDfWithoutPrice, is.numeric)
-# traindDfWithoutPrice[ind] <- lapply(traindDfWithoutPrice[ind], scale)
-# 
-# testDfWithoutPrice$Price <- scale(testDfWithoutPrice$Price)
-# testDfWithoutPrice[ind] <- lapply(testDfWithoutPrice[ind], scale)
-```
 
 </br>
 
-####Support Vector Machine (SVM)
-```{r}
-linearSVMclassifier <- svm(Price ~ ., traindDf, kernel="linear")
-```
+##Support Vector Machine (SVM)
+Although the method ksvm does not fail when given NA value, internally is omitting them and learning anything from them. So with SVM, we used the complete dataset created by data imputation.
 
-####Confusion Matrix of the classifier
+### {.tabset .tabset-fade .tabset-pills}
+Now we tried a couple of SVM with a different model on all columns of the data. We perform 10-fold cross-validation to see the training error and cross-validation error of each model.
+
+#### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
 ```{r}
-summary(linearSVMclassifier)
+linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
+linearSVMclassifier
 predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
-
-# summary(predictedPrice)
-# length(testDf$Price)
-postResample(testDf$Price, predictedPrice)
-
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
 ```
 
+#### Anova kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+anovaSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="anovadot", cross = 10, scaled = TRUE)
+anovaSVMclassifier
+predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Radial Basis kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+radialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="rbfdot", cross = 10, scaled = TRUE)
+radialSVMclassifier
+predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 3 the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=3), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 5 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=5), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Laplacian kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+laplacianSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="laplacedot", cross = 10, scaled = TRUE)
+laplacianSVMclassifier
+predictedPrice = predict(laplacianSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
 
+#### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
+besselSVMclassifier
+predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+###Removing columns with too much NA values in original data
+### {.tabset .tabset-fade .tabset-pills}
+Now we try to remove columns which have many NA values. So we remove the columns Bedroom2, Car, YearBuild and lattitude and longtitide. Then we perform 10-fold cross validation to see the training error and cross validation error of each model on those reduced dataset.
+```{r}
+smallDatasetTrain <- smallDatasetTrain[-c(9,11,14,16,17)]
+smallDatasetTest <- smallDatasetTest[-c(9,11,14,16,17)]
+```
+
+#### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
+linearSVMclassifier
+predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+#### Anova kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+anovaSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="anovadot", cross = 10, scaled = TRUE)
+anovaSVMclassifier
+predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Radial Basis kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+radialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="rbfdot", cross = 10, scaled = TRUE)
+radialSVMclassifier
+predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 3 the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=3), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 5 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=5), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Laplacian kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+laplacianSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="laplacedot", cross = 10, scaled = TRUE)
+laplacianSVMclassifier
+predictedPrice = predict(laplacianSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+#### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
+besselSVMclassifier
+predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+</br>
+
+###Training final SVM model
+Based od root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data with column with many NA values. Therofore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
+Note: We split the data in ration 1:1 because on when we used more data the ksvm crashed on error due to not enough memory
+####Preparing data for final SVM model
+```{r}
+split = sample.split(data, SplitRatio = 0.5)
+trainDf = subset(dataComplete, split == TRUE)
+testDf = subset(dataComplete, split == FALSE)
+
+trainDf <- trainDf[-c(9,11,14,16,17)]
+testDf <- testDf[-c(9,11,14,16,17)]
+
+traindDfWithoutPrice <- trainDf[-4]
+testDfWithoutPrice <- testDf[-4]
+```
+
+###Training the model
+```{r}
+radialSVMclassifier <- ksvm(Price ~ ., trainDf, kernel="rbfdot", cross = 10, scaled = TRUE)
+radialSVMclassifier
+predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(testDf$Price, predictedPrice)
+error
+```
