@@ -23,6 +23,16 @@ library(GGally)
 library(geosphere)
 library(dplyr)
 library(VIM)
+library(rpart) #Alessandra 1
+library(rattle) #Alessandra 2
+library(e1071) #Alessandra 3
+library(caret) #Alessandra 4
+library(gbm) #Alssandra 5
+library(party) #Alessandra 6
+library(mboost) #Alessandra 7
+library(plyr) #Alessandra 8
+library(partykit) #Alessandra 9
+library(randomForest) #Alessandra 10
 
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
@@ -70,14 +80,15 @@ hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
 hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
 ```
 
+
 ### Aggregating attributes and deriving new columns
 ```{r}
 
 # Add year column and street column
-addresses<-gsub("[[:punct:]]", "", dataOriginal$Address)
+addresses<-gsub("[[:punct:]]", "", dataComplete$Address) # Alessandra: here I've changed from dataOriginal to dataComplete
 addresses<-gsub("[[:digit:]]", "", addresses)
 
-data<-mutate(dataOriginal, Street=addresses, YearSaled=year(dataOriginal$Date))
+data<-mutate(dataComplete, YearSaled=year(dataOriginal$Date))  # Alessandra: here I've changed from dataOriginal to dataComplete, and I've removed the street column
 
 # Add season column
 data<-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, "Spring",ifelse(month(data$Date) %in% 6:8, "summer", ifelse(month(data$Date) %in% 9:11, "Autumn","Winter"))))
@@ -104,3 +115,168 @@ data<-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude),
 str(data)
 summary(data)
 ```
+
+<!-- #### Scatterplots -->
+<!-- ```{r} -->
+<!-- pairs(data[,c(2,4,7,9,10,11,12,13,14,16,17,19,20,22,23)],  -->
+<!--    main="Simple Scatterplot Matrix") -->
+<!-- ``` -->
+
+##CART
+
+We split the dataset into train and test
+```{r}
+train.indexes <- sample(1:nrow(data),0.75*nrow(data))
+data.train <- data[train.indexes,]
+data.test <- data[-train.indexes,]
+ytrain <- data.train[,"Price"]
+ytest <- data.test[,"Price"] 
+```
+
+
+We learn a tree regression model with different values of cp and we plot RMSE and Rsquared
+```{r}
+cp_vect<-seq(0.001,0.3,(0.3-0.001)/30)
+RMSE.tree.test=numeric(length(cp_vect))
+RMSE.tree.train=numeric(length(cp_vect))
+Rsquared.tree=numeric(length(cp_vect))
+for (i in seq(1:length(cp_vect))){
+  model.tree=rpart(Price ~ . ,data = data.train,cp=cp_vect[i]) 
+  pred.tree.test <- predict(model.tree,newdata=data.test) 
+  pred.tree.train <- predict(model.tree,newdata=data.train)
+  RMSE.tree.test[i] <- sqrt(mean((pred.tree.test-ytest)^2))
+  RMSE.tree.train[i] <- sqrt(mean((pred.tree.train-ytrain)^2))
+  Rsquared.tree[i] <- 1 - sum((pred.tree.test-ytest)^2)/sum((ytest-mean(ytest))^2)
+}
+
+# plot RMSE vs cp
+plot(cp_vect,RMSE.tree.test,type="l",col="red",xlab="cp",ylab="RMSE",main="RMSE")
+lines(cp_vect,RMSE.tree.train,col="blue")
+legend("bottomright",lty=1,col=c("red","blue"),legend = c("test ", "train "))
+
+# plot Rsquared vs cp
+plot(cp_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main="R^2")
+
+```
+
+We can see that the smaller cp is, the better is the model (lower RMSE and higher Rsquared).
+
+Let's apply 10-fold cross validation to confirm it.
+
+We had to remove the columns of Suburbs and Sellers to run a later part of the code (bagging and boosting), so we remove those columns from here in order to make a comparison between the different techniques. The information of Suburbs is already contained in the latitude and longitude, and we saw that Sellers are not that significative in our model.
+```{r, warning=FALSE}
+train_control <- trainControl(method="cv", number=10)
+evaltree <- train(Price~., data=data[,-c(1,6)], trControl=train_control, method="rpart",tuneLength = 10)
+evaltree$bestTune
+```
+
+
+Now we want to see how different values of max.depth affect our tree regression model.
+```{r}
+# learn a tree regression model with different values of max.depth, and the best cp value found before
+depth_vect <- seq (1,30,1)
+RMSE.tree.test=numeric(length(depth_vect))
+RMSE.tree.train=numeric(length(depth_vect))
+Rsquared.tree=numeric(length(depth_vect))
+for (i in seq(1:length(depth_vect))){
+  model.tree=rpart(Price ~ . ,data = data.train,maxdepth=depth_vect[i],cp=evaltree$bestTune) 
+  pred.tree.test <- predict(model.tree,newdata=data.test) 
+  pred.tree.train <- predict(model.tree,newdata=data.train)
+  RMSE.tree.test[i] <- sqrt(mean((pred.tree.test-ytest)^2))
+  RMSE.tree.train[i] <- sqrt(mean((pred.tree.train-ytrain)^2))
+  Rsquared.tree[i] <- 1 - sum((pred.tree.test-ytest)^2)/sum((ytest-mean(ytest))^2)
+}
+```
+
+```{r}
+# plot RMSE
+plot(depth_vect,RMSE.tree.test,type="l",col="red",xlab="cp",ylab="RMSE",main="RMSE", ylim=c(350000, 575000))
+lines(depth_vect,RMSE.tree.train,col="blue")
+legend("bottomright",lty=1,col=c("red","blue"),legend = c("test ", "train "))
+```
+
+```{r}
+# plot Rsquared
+plot(depth_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main="R^2")
+```
+
+We can see that for a depth greater than 5 RMSE and R squared stay constant, so it's fine to keep the default value max.depth=30.
+
+</br>
+This is the final model obtained through cross validation on the tuning parameter cp.
+```{r}
+fancyRpartPlot(evaltree$finalModel)
+
+#RMSE and Rsquared of our final model
+rmse1 <- evaltree$results$RMSE[1]
+rs1 <- evaltree$results$Rsquared[1]
+```
+
+</br>
+
+Now we want to see if we can improve the model with bagging and boosting.
+
+
+#### Bagging
+```{r}
+evaltreebag <- train(Price~., data=data[,-c(1,6)], trControl=train_control, method="treebag") #it takes like 5 minutes to run
+
+# R squared
+rs2<-evaltreebag$results$Rsquared
+# RMSE
+rmse2<-evaltreebag$results$RMSE
+```
+
+#### Boosting
+```{r echo=FALSE}
+#problem risolution
+councarea<-lapply(data$CouncilArea, as.character)
+councarea<-gsub(pattern = "\\s",   
+     replacement = "",
+     x = councarea)
+data$CouncilArea<-as.factor(councarea)
+
+regionnames<-lapply(data$Regionname, as.character)
+regionnames<-gsub(pattern = "\\s",   
+     replacement = "",
+     x = regionnames)
+regionnames<-gsub('-',"",regionnames)
+regionnames<-as.factor(regionnames)
+data$Regionname<-regionnames
+```
+
+```{r}
+evaltreeboost <- train(Price~., data=data[,-c(1,6)], trControl=train_control, method="blackboost") #takes 35/40 minutes to run D:
+
+# R squared
+rs3<-evaltreeboost$results$Rsquared[9]
+# RMSE
+rmse3<-evaltreeboost$results$RMSE[9]
+```
+
+```{r}
+# Let's see with Cross Validation what are the best tuning paramenters for boosting
+plot(evaltreeboost)
+evaltreeboost$bestTune
+
+```
+
+Now we can compare regression trees, bagged regression trees, boosted regression trees.
+```{r}
+df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rs1,rs2,rs3))
+barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2,
+ylim=c(0,1))
+
+df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rmse1,rmse2,rmse3))
+barplot(df$Rsquared,ylab='RMSE',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2)
+
+```
+
+We can see that the boosted model is the best, with the highest R squared and the smallest RMSE.
+
+
+
+
+
