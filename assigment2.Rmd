@@ -23,17 +23,24 @@ library(GGally)
 library(geosphere)
 library(dplyr)
 library(VIM)
-library(rpart) #Alessandra 1
-library(rattle) #Alessandra 2
-library(e1071) #Alessandra 3
-library(caret) #Alessandra 4
-library(gbm) #Alssandra 5
-library(party) #Alessandra 6
-library(mboost) #Alessandra 7
-library(plyr) #Alessandra 8
-library(partykit) #Alessandra 9
-library(randomForest) #Alessandra 10
+library(rpart) 
+library(rattle) 
+library(e1071)  
+library(caret)  
+library(gbm)  
+library(party) 
+library(mboost) 
+library(plyr) 
+library(partykit) 
+library(randomForest) 
+library(lubridate)
+library(caTools)
+library(Metrics)
+library(kernlab)
+```
 
+
+```{r}
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
 
@@ -46,8 +53,8 @@ dataOriginal$Date<-as.Date(dataOriginal$Date, "%d/%m/%Y")
 ```
 
 ### NA values
-Let's vizualise NA values
-```{r}
+Let's visualize NA values
+```{r NAvizualisation}
 aggr(dataOriginal,delimiter=NULL, plot=TRUE)
 ```
 
@@ -60,82 +67,85 @@ dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
 
 You can also embed plots, for example:
 
-```{r}
-#we don't need to do that apriori, but only if there will be any technique that doesn't work with NA 
+```{r dataComplete}
 set.seed(101) 
 init = mice(dataOriginal, maxit=0) 
 dataComplete <- complete(init)
 ```
-</br>
 
-###The target variable
+We will decide later to use dataComplete or dataOriginal, according to each technique.
 
-####Distribution
-```{r}
+</br
+
+### The target variable
+
+#### Distribution
+
+```{r histPrice}
 hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
 ```
 
 #### Logarithmic distribution
-```{r}
+```{r histlogPrice}
 hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
 ```
 
 
 ### Aggregating attributes and deriving new columns
-```{r}
+```{r new-columns}
+aggregetaData <- function(data) {
 
-# Add year column and street column
-addresses<-gsub("[[:punct:]]", "", dataComplete$Address) # Alessandra: here I've changed from dataOriginal to dataComplete
-addresses<-gsub("[[:digit:]]", "", addresses)
+  
+  # Add year column and street column
+  addresses<-gsub("[[:punct:]]", "", data$Address)
+  addresses<-gsub("[[:digit:]]", "", addresses)
+  
+  newData<-mutate(data, YearSaled=year(dataOriginal$Date))  
+  
+  # Add season column
+  newData <- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, "Spring",ifelse(month(newData$Date) %in% 6:8, "summer", ifelse(month(newData$Date) %in% 9:11, "Autumn","Winter"))))
+  
+  # Remove unuseful columns
+  newData<-select(newData,-c(Address,Date))
+  
+  # Add a column with the distance to the center of the bay
+  MelbourneBayCentre <- cbind(144.783832, -38.104275)
+  newData <- mutate(newData, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000)   #in km
+  
+  # Make from string variables factor
+  newData$Season <- factor(newData$Season)
+  
+  # Add a column with the distance to the airports
+  MelbourneAirport<-c( 144.841802,-37.670149)
+  AvalonAirport<- c( 144.473152,-38.027377)
+  EssendonAirport<- c( 144.902035,-37.726376)
+  MoorabbinAirport <- c( 145.100306,-37.979454)
+  newData<-mutate(newData,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
+  
+   return(newData)
+}
 
-data<-mutate(dataComplete, YearSaled=year(dataOriginal$Date))  # Alessandra: here I've changed from dataOriginal to dataComplete, and I've removed the street column
-
-# Add season column
-data<-mutate(data, Season=ifelse(month(data$Date) %in% 3:5, "Spring",ifelse(month(data$Date) %in% 6:8, "summer", ifelse(month(data$Date) %in% 9:11, "Autumn","Winter"))))
-
-# Remove unuseful columns
-data<-select(data,-c(Address,Date))
-
-# Add a column with the distance to the center of the bay
-MelbourneBayCentre <- cbind(144.783832, -38.104275)
-data <- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
-
-# Add a column with the distance to the airports
-MelbourneAirport<-c( 144.841802,-37.670149)
-AvalonAirport<- c( 144.473152,-38.027377)
-EssendonAirport<- c( 144.902035,-37.726376)
-MoorabbinAirport <- c( 145.100306,-37.979454)
-data<-mutate(data,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
+data <- aggregetaData(dataOriginal)
+dataComplete <- aggregetaData(dataComplete)
 ```
 
-</br>
 
-#### Summary of data
-```{r}
-str(data)
-summary(data)
-```
+## Regression trees
+Since to compute cross validation on a rpart model we need to not have NA values, we proceed considering the dataset dataComplete.
 
-<!-- #### Scatterplots -->
-<!-- ```{r} -->
-<!-- pairs(data[,c(2,4,7,9,10,11,12,13,14,16,17,19,20,22,23)],  -->
-<!--    main="Simple Scatterplot Matrix") -->
-<!-- ``` -->
-
-##CART
-
-We split the dataset into train and test
-```{r}
-train.indexes <- sample(1:nrow(data),0.75*nrow(data))
-data.train <- data[train.indexes,]
-data.test <- data[-train.indexes,]
+#### Splitting the dataset into train and test
+```{r train-test}
+train.indexes <- sample(1:nrow(dataComplete),0.75*nrow(dataComplete))
+data.train <- dataComplete[train.indexes,]
+data.test <- dataComplete[-train.indexes,]
 ytrain <- data.train[,"Price"]
 ytest <- data.test[,"Price"] 
 ```
 
 
-We learn a tree regression model with different values of cp and we plot RMSE and Rsquared
-```{r}
+### Training the tree regression model with different cp value
+
+```{r tree_different_cp}
 cp_vect<-seq(0.001,0.3,(0.3-0.001)/30)
 RMSE.tree.test=numeric(length(cp_vect))
 RMSE.tree.train=numeric(length(cp_vect))
@@ -164,15 +174,16 @@ We can see that the smaller cp is, the better is the model (lower RMSE and highe
 Let's apply 10-fold cross validation to confirm it.
 
 We had to remove the columns of Suburbs and Sellers to run a later part of the code (bagging and boosting), so we remove those columns from here in order to make a comparison between the different techniques. The information of Suburbs is already contained in the latitude and longitude, and we saw that Sellers are not that significative in our model.
-```{r, warning=FALSE}
+```{r CVtree_tuning_cp, warning=FALSE}
 train_control <- trainControl(method="cv", number=10)
-evaltree <- train(Price~., data=data[,-c(1,6)], trControl=train_control, method="rpart",tuneLength = 10)
+evaltree <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="rpart",tuneLength = 10)
 evaltree$bestTune
 ```
 
+### Training the tree regression model with different max.depth values
 
 Now we want to see how different values of max.depth affect our tree regression model.
-```{r}
+```{r tree_different_depth}
 # learn a tree regression model with different values of max.depth, and the best cp value found before
 depth_vect <- seq (1,30,1)
 RMSE.tree.test=numeric(length(depth_vect))
@@ -202,6 +213,7 @@ plot(depth_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", m
 
 We can see that for a depth greater than 5 RMSE and R squared stay constant, so it's fine to keep the default value max.depth=30.
 
+### Final standard tree regression model
 </br>
 This is the final model obtained through cross validation on the tuning parameter cp.
 ```{r}
@@ -217,9 +229,9 @@ rs1 <- evaltree$results$Rsquared[1]
 Now we want to see if we can improve the model with bagging and boosting.
 
 
-#### Bagging
-```{r}
-evaltreebag <- train(Price~., data=data[,-c(1,6)], trControl=train_control, method="treebag") #it takes like 5 minutes to run
+### Bagging
+```{r bagging_tree}
+evaltreebag <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="treebag") #it takes like 5 minutes to run
 
 # R squared
 rs2<-evaltreebag$results$Rsquared
@@ -227,26 +239,26 @@ rs2<-evaltreebag$results$Rsquared
 rmse2<-evaltreebag$results$RMSE
 ```
 
-#### Boosting
-```{r echo=FALSE}
+### Boosting
+```{r boosting_tree_pb_solution, echo=FALSE}
 #problem risolution
-councarea<-lapply(data$CouncilArea, as.character)
+councarea<-lapply(dataComplete$CouncilArea, as.character)
 councarea<-gsub(pattern = "\\s",   
      replacement = "",
      x = councarea)
-data$CouncilArea<-as.factor(councarea)
+dataComplete$CouncilArea<-as.factor(councarea)
 
-regionnames<-lapply(data$Regionname, as.character)
+regionnames<-lapply(dataComplete$Regionname, as.character)
 regionnames<-gsub(pattern = "\\s",   
      replacement = "",
      x = regionnames)
 regionnames<-gsub('-',"",regionnames)
 regionnames<-as.factor(regionnames)
-data$Regionname<-regionnames
+dataComplete$Regionname<-regionnames
 ```
 
-```{r}
-evaltreeboost <- train(Price~., data=data[,-c(1,6)], trControl=train_control, method="blackboost") #takes 35/40 minutes to run D:
+```{r boosting_tree}
+evaltreeboost <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="blackboost") #takes 35/40 minutes to run D:
 
 # R squared
 rs3<-evaltreeboost$results$Rsquared[9]
@@ -261,8 +273,9 @@ evaltreeboost$bestTune
 
 ```
 
+### Final comparison
 Now we can compare regression trees, bagged regression trees, boosted regression trees.
-```{r}
+```{r comparison_tree_models}
 df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rs1,rs2,rs3))
 barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
 cex.names=2,col='blue',cex.axis=2,
@@ -274,9 +287,205 @@ cex.names=2,col='blue',cex.axis=2)
 
 ```
 
-We can see that the boosted model is the best, with the highest R squared and the smallest RMSE.
+We can see that the boosted model is the best one, with the highest R squared and the smallest RMSE.
 
 
 
+##Support Vector Machine (SVM)
+
+</br>
+
+####Small dataset
+We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.
+```{r small_dataset}
+set.seed(123)
+
+split = sample.split(dataComplete, SplitRatio = 0.01)
+smallDataset = subset(dataComplete, split == TRUE)
+
+split = sample.split(data, SplitRatio = 0.7)
+smallDatasetTrain = subset(smallDataset, split == TRUE)
+smallDatasetTest = subset(smallDataset, split == FALSE)
+
+traindDfWithoutPrice <- smallDatasetTrain[-4]
+testDfWithoutPrice <- smallDatasetTest[-4]
+```
+
+</br>
+
+
+Although the method ksvm does not fail when given NA value, internally is omitting them and learning anything from them. So with SVM, we used the complete dataset created by data imputation.
+
+### {.tabset .tabset-fade .tabset-pills}
+Now we tried a couple of SVM with a different model on all columns of the data. We perform 10-fold cross-validation to see the training error and cross-validation error of each model.
+
+#### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r, message=FALSE}
+linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
+linearSVMclassifier
+predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+#### Anova kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r, message=FALSE}
+anovaSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="anovadot", cross = 10, scaled = TRUE)
+anovaSVMclassifier
+predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Radial Basis kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+radialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="rbfdot", cross = 10, scaled = TRUE)
+radialSVMclassifier
+predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 3 the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=3), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 5 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=5), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Laplacian kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+laplacianSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="laplacedot", cross = 10, scaled = TRUE)
+laplacianSVMclassifier
+predictedPrice = predict(laplacianSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+#### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r message=FALSE}
+besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
+besselSVMclassifier
+predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+###Removing columns with too much NA values in original data
+### {.tabset .tabset-fade .tabset-pills}
+Now we try to remove columns which have many NA values. So we remove the columns Bedroom2, Car, YearBuild and lattitude and longtitide. Then we perform 10-fold cross validation to see the training error and cross validation error of each model on those reduced dataset.
+```{r}
+smallDatasetTrain <- smallDatasetTrain[-c(9,11,14,16,17)]
+smallDatasetTest <- smallDatasetTest[-c(9,11,14,16,17)]
+```
+
+#### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r message=FALSE}
+linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
+linearSVMclassifier
+predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+#### Anova kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r  message=FALSE}
+anovaSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="anovadot", cross = 10, scaled = TRUE)
+anovaSVMclassifier
+predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Radial Basis kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+radialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="rbfdot", cross = 10, scaled = TRUE)
+radialSVMclassifier
+predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 3 the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=3), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 5 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=5), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
+```{r}
+polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
+polynomialSVMclassifier
+predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+#### Laplacian kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r}
+laplacianSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="laplacedot", cross = 10, scaled = TRUE)
+laplacianSVMclassifier
+predictedPrice = predict(laplacianSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+#### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+```{r message=FALSE}
+besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
+besselSVMclassifier
+predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
+error = postResample(smallDatasetTest$Price, predictedPrice)
+error
+```
+
+</br>
+
+###Training final SVM model
+Based on root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data without columns with many NA values. Therefore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
+Note: We split the data in ration 1:1 because on when we used more data the ksvm crashed on error due to not enough memory
+####Preparing data for final SVM model
+```{r}
+split = sample.split(data, SplitRatio = 0.5)
+trainDf = subset(dataComplete, split == TRUE)
+testDf = subset(dataComplete, split == FALSE)
+
+trainDf <- trainDf[-c(9,11,14,16,17)]
+testDf <- testDf[-c(9,11,14,16,17)]
+
+traindDfWithoutPrice <- trainDf[-4]
+testDfWithoutPrice <- testDf[-4]
+```
+
+####Training the model
+```{r final_SVM_model}
+radialSVMclassifier <- ksvm(Price ~ ., trainDf, kernel="rbfdot", cross = 10, scaled = TRUE)
+radialSVMclassifier
+predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
+error = postResample(testDf$Price, predictedPrice)
+error
+```
 
 
