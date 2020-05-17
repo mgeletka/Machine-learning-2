@@ -23,14 +23,25 @@ library(GGally)
 library(geosphere)
 library(dplyr)
 library(VIM)
+library(rpart) 
+library(rattle) 
+library(e1071)  
+library(caret)  
+library(gbm)  
+library(party) 
+library(mboost) 
+library(plyr) 
+library(partykit) 
+library(randomForest) 
 library(lubridate)
 library(caTools)
-library(e1071)
 library(Metrics)
-library(caret)
 library(kernlab)
+```
 
 
+
+```{r}
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
 
@@ -43,8 +54,8 @@ dataOriginal$Date<-as.Date(dataOriginal$Date, "%d/%m/%Y")
 ```
 
 ### NA values
-Let's vizualise NA values
-```{r}
+Let's visualize NA values
+```{r NAvizualisation}
 aggr(dataOriginal,delimiter=NULL, plot=TRUE)
 ```
 
@@ -57,37 +68,51 @@ dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
 
 You can also embed plots, for example:
 
-```{r}
-#we don't need to do that apriori, but only if there will be any technique that doesn't work with NA 
+```{r dataComplete}
 set.seed(101) 
 init = mice(dataOriginal, maxit=0) 
 dataComplete <- complete(init)
 ```
-</br>
 
-###The target variable
+We will decide later to use dataComplete or dataOriginal, according to each technique.
 
-####Distribution
-```{r}
-hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$", breaks=seq(0,max(dataOriginal$Price),l=100))
+
+</br
+
+### The target variable
+
+#### Distribution
+
+```{r histPrice}
+hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
 ```
 
 #### Logarithmic distribution
-```{r}
-hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)", breaks=seq(log10(min(dataOriginal$Price)),log10(max(dataOriginal$Price)),l=100))
+```{r histlogPrice}
+hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
+
 ```
 
+
+</br>
+  
+#### Summary of data
+```{r, eval=FALSE}
+  str(data)
+  summary(data)
+```
+
+
 ### Aggregating attributes and deriving new columns
-```{r}
+```{r new-columns}
 aggregetaData <- function(data) {
+
   
-  
-   # Add year column and street column
+  # Add year column and street column
   addresses<-gsub("[[:punct:]]", "", data$Address)
   addresses<-gsub("[[:digit:]]", "", addresses)
   
-  
-  newData <- mutate(data, Street=addresses, YearSaled=year(data$Date))
+  newData<-mutate(data, YearSaled=year(dataOriginal$Date))  
   
   # Add season column
   newData <- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, "Spring",ifelse(month(newData$Date) %in% 6:8, "summer", ifelse(month(newData$Date) %in% 9:11, "Autumn","Winter"))))
@@ -97,10 +122,9 @@ aggregetaData <- function(data) {
   
   # Add a column with the distance to the center of the bay
   MelbourneBayCentre <- cbind(144.783832, -38.104275)
-  data <- mutate(data, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000) #in km
+  newData <- mutate(newData, DistanceToBayCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneBayCentre)/1000)   #in km
   
   # Make from string variables factor
-  newData$Street <- factor(newData$Street)
   newData$Season <- factor(newData$Season)
   
   # Add a column with the distance to the airports
@@ -110,30 +134,188 @@ aggregetaData <- function(data) {
   MoorabbinAirport <- c( 145.100306,-37.979454)
   newData<-mutate(newData,DistanceToAirports = pmin(distGeo(cbind(Longtitude,Lattitude), MelbourneAirport), distGeo(cbind(Longtitude,Lattitude), AvalonAirport), distGeo(cbind(Longtitude,Lattitude), EssendonAirport), distGeo(cbind(Longtitude,Lattitude), MoorabbinAirport))/1000) #in km
   
-  return(newData)
+   return(newData)
 }
 
 data <- aggregetaData(dataOriginal)
 dataComplete <- aggregetaData(dataComplete)
 ```
 
+
+## Regression trees
+Since to compute cross validation on a rpart model we need to not have NA values, we proceed considering the dataset dataComplete.
+
+#### Splitting the dataset into train and test
+```{r train-test}
+train.indexes <- sample(1:nrow(dataComplete),0.75*nrow(dataComplete))
+data.train <- dataComplete[train.indexes,]
+data.test <- dataComplete[-train.indexes,]
+ytrain <- data.train[,"Price"]
+ytest <- data.test[,"Price"] 
+```
+
+
+### Training the tree regression model with different cp value
+
+```{r tree_different_cp}
+cp_vect<-seq(0.001,0.3,(0.3-0.001)/30)
+RMSE.tree.test=numeric(length(cp_vect))
+RMSE.tree.train=numeric(length(cp_vect))
+Rsquared.tree=numeric(length(cp_vect))
+for (i in seq(1:length(cp_vect))){
+  model.tree=rpart(Price ~ . ,data = data.train,cp=cp_vect[i]) 
+  pred.tree.test <- predict(model.tree,newdata=data.test) 
+  pred.tree.train <- predict(model.tree,newdata=data.train)
+  RMSE.tree.test[i] <- sqrt(mean((pred.tree.test-ytest)^2))
+  RMSE.tree.train[i] <- sqrt(mean((pred.tree.train-ytrain)^2))
+  Rsquared.tree[i] <- 1 - sum((pred.tree.test-ytest)^2)/sum((ytest-mean(ytest))^2)
+}
+
+# plot RMSE vs cp
+plot(cp_vect,RMSE.tree.test,type="l",col="red",xlab="cp",ylab="RMSE",main="RMSE")
+lines(cp_vect,RMSE.tree.train,col="blue")
+legend("bottomright",lty=1,col=c("red","blue"),legend = c("test ", "train "))
+
+# plot Rsquared vs cp
+plot(cp_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main="R^2")
+
+```
+
+We can see that the smaller cp is, the better is the model (lower RMSE and higher Rsquared).
+
+Let's apply 10-fold cross validation to confirm it.
+
+We had to remove the columns of Suburbs and Sellers to run a later part of the code (bagging and boosting), so we remove those columns from here in order to make a comparison between the different techniques. The information of Suburbs is already contained in the latitude and longitude, and we saw that Sellers are not that significative in our model.
+```{r CVtree_tuning_cp, warning=FALSE}
+train_control <- trainControl(method="cv", number=10)
+evaltree <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="rpart",tuneLength = 10)
+evaltree$bestTune
+```
+
+### Training the tree regression model with different max.depth values
+
+Now we want to see how different values of max.depth affect our tree regression model.
+```{r tree_different_depth}
+# learn a tree regression model with different values of max.depth, and the best cp value found before
+depth_vect <- seq (1,30,1)
+RMSE.tree.test=numeric(length(depth_vect))
+RMSE.tree.train=numeric(length(depth_vect))
+Rsquared.tree=numeric(length(depth_vect))
+for (i in seq(1:length(depth_vect))){
+  model.tree=rpart(Price ~ . ,data = data.train,maxdepth=depth_vect[i],cp=evaltree$bestTune) 
+  pred.tree.test <- predict(model.tree,newdata=data.test) 
+  pred.tree.train <- predict(model.tree,newdata=data.train)
+  RMSE.tree.test[i] <- sqrt(mean((pred.tree.test-ytest)^2))
+  RMSE.tree.train[i] <- sqrt(mean((pred.tree.train-ytrain)^2))
+  Rsquared.tree[i] <- 1 - sum((pred.tree.test-ytest)^2)/sum((ytest-mean(ytest))^2)
+}
+```
+
+```{r}
+# plot RMSE
+plot(depth_vect,RMSE.tree.test,type="l",col="red",xlab="cp",ylab="RMSE",main="RMSE", ylim=c(350000, 575000))
+lines(depth_vect,RMSE.tree.train,col="blue")
+legend("bottomright",lty=1,col=c("red","blue"),legend = c("test ", "train "))
+```
+
+```{r}
+# plot Rsquared
+plot(depth_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main="R^2")
+```
+
+We can see that for a depth greater than 5 RMSE and R squared stay constant, so it's fine to keep the default value max.depth=30.
+
+### Final standard tree regression model
+</br>
+This is the final model obtained through cross validation on the tuning parameter cp.
+```{r}
+fancyRpartPlot(evaltree$finalModel)
+
+#RMSE and Rsquared of our final model
+rmse1 <- evaltree$results$RMSE[1]
+rs1 <- evaltree$results$Rsquared[1]
+```
+
 </br>
 
-#### Summary of data
-```{r}
-str(data)
-summary(data)
+Now we want to see if we can improve the model with bagging and boosting.
+
+
+### Bagging
+```{r bagging_tree}
+evaltreebag <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="treebag") #it takes like 5 minutes to run
+
+# R squared
+rs2<-evaltreebag$results$Rsquared
+# RMSE
+rmse2<-evaltreebag$results$RMSE
 ```
+
+### Boosting
+```{r boosting_tree_pb_solution, echo=FALSE}
+#problem risolution
+councarea<-lapply(dataComplete$CouncilArea, as.character)
+councarea<-gsub(pattern = "\\s",   
+     replacement = "",
+     x = councarea)
+dataComplete$CouncilArea<-as.factor(councarea)
+
+regionnames<-lapply(dataComplete$Regionname, as.character)
+regionnames<-gsub(pattern = "\\s",   
+     replacement = "",
+     x = regionnames)
+regionnames<-gsub('-',"",regionnames)
+regionnames<-as.factor(regionnames)
+dataComplete$Regionname<-regionnames
+```
+
+```{r boosting_tree}
+evaltreeboost <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="blackboost") #takes 35/40 minutes to run D:
+
+# R squared
+rs3<-evaltreeboost$results$Rsquared[9]
+# RMSE
+rmse3<-evaltreeboost$results$RMSE[9]
+```
+
+```{r}
+
+# Let's see with Cross Validation what are the best tuning paramenters for boosting
+plot(evaltreeboost)
+evaltreeboost$bestTune
+
+```
+
+### Final comparison
+Now we can compare regression trees, bagged regression trees, boosted regression trees.
+```{r comparison_tree_models}
+df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rs1,rs2,rs3))
+barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2,
+ylim=c(0,1))
+
+df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rmse1,rmse2,rmse3))
+barplot(df$Rsquared,ylab='RMSE',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2)
+
+```
+
+We can see that the boosted model is the best one, with the highest R squared and the smallest RMSE.
+
+
+
+##Support Vector Machine (SVM)
 
 </br>
 
 ####Small dataset
 We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.
-```{r}
+```{r small_dataset}
 set.seed(123)
 
 split = sample.split(dataComplete, SplitRatio = 0.01)
 smallDataset = subset(dataComplete, split == TRUE)
+
 
 split = sample.split(data, SplitRatio = 0.7)
 smallDatasetTrain = subset(smallDataset, split == TRUE)
@@ -146,16 +328,15 @@ testDfWithoutPrice <- smallDatasetTest[-4]
 </br>
 
 
-</br>
 
-##Support Vector Machine (SVM)
 Although the method ksvm does not fail when given NA value, internally is omitting them and learning anything from them. So with SVM, we used the complete dataset created by data imputation.
 
 ### {.tabset .tabset-fade .tabset-pills}
 Now we tried a couple of SVM with a different model on all columns of the data. We perform 10-fold cross-validation to see the training error and cross-validation error of each model.
 
 #### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
-```{r}
+
+```{r, message=FALSE}
 linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
 linearSVMclassifier
 predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
@@ -164,7 +345,7 @@ error
 ```
 
 #### Anova kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
-```{r}
+```{r, message=FALSE}
 anovaSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="anovadot", cross = 10, scaled = TRUE)
 anovaSVMclassifier
 predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
@@ -213,7 +394,7 @@ error
 ```
 
 #### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
-```{r}
+```{r message=FALSE}
 besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
 besselSVMclassifier
 predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
@@ -230,7 +411,7 @@ smallDatasetTest <- smallDatasetTest[-c(9,11,14,16,17)]
 ```
 
 #### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
-```{r}
+```{r message=FALSE}
 linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
 linearSVMclassifier
 predictedPrice = predict(linearSVMclassifier, testDfWithoutPrice)
@@ -239,7 +420,7 @@ error
 ```
 
 #### Anova kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
-```{r}
+```{r  message=FALSE}
 anovaSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="anovadot", cross = 10, scaled = TRUE)
 anovaSVMclassifier
 predictedPrice = predict(anovaSVMclassifier, testDfWithoutPrice)
@@ -272,6 +453,7 @@ error
 ```
 #### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
 ```{r}
+
 polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
 polynomialSVMclassifier
 predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
@@ -288,7 +470,9 @@ error
 ```
 
 #### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
-```{r}
+
+```{r message=FALSE}
+
 besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
 besselSVMclassifier
 predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
@@ -299,7 +483,9 @@ error
 </br>
 
 ###Training final SVM model
-Based od root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data with column with many NA values. Therofore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
+
+Based on root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data without columns with many NA values. Therefore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
+
 Note: We split the data in ration 1:1 because on when we used more data the ksvm crashed on error due to not enough memory
 ####Preparing data for final SVM model
 ```{r}
@@ -314,11 +500,14 @@ traindDfWithoutPrice <- trainDf[-4]
 testDfWithoutPrice <- testDf[-4]
 ```
 
-###Training the model
-```{r}
+
+####Training the model
+```{r final_SVM_model}
+
 radialSVMclassifier <- ksvm(Price ~ ., trainDf, kernel="rbfdot", cross = 10, scaled = TRUE)
 radialSVMclassifier
 predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
 error = postResample(testDf$Price, predictedPrice)
 error
 ```
+
