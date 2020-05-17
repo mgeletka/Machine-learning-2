@@ -40,6 +40,7 @@ library(kernlab)
 ```
 
 
+
 ```{r}
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
@@ -75,6 +76,7 @@ dataComplete <- complete(init)
 
 We will decide later to use dataComplete or dataOriginal, according to each technique.
 
+
 </br
 
 ### The target variable
@@ -88,6 +90,7 @@ hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
 #### Logarithmic distribution
 ```{r histlogPrice}
 hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
+
 ```
 
 
@@ -276,6 +279,7 @@ rmse3<-evaltreeboost$results$RMSE[9]
 ```
 
 ```{r}
+
 # Let's see with Cross Validation what are the best tuning paramenters for boosting
 plot(evaltreeboost)
 evaltreeboost$bestTune
@@ -312,6 +316,7 @@ set.seed(123)
 split = sample.split(dataComplete, SplitRatio = 0.01)
 smallDataset = subset(dataComplete, split == TRUE)
 
+
 split = sample.split(data, SplitRatio = 0.7)
 smallDatasetTrain = subset(smallDataset, split == TRUE)
 smallDatasetTest = subset(smallDataset, split == FALSE)
@@ -323,12 +328,14 @@ testDfWithoutPrice <- smallDatasetTest[-4]
 </br>
 
 
+
 Although the method ksvm does not fail when given NA value, internally is omitting them and learning anything from them. So with SVM, we used the complete dataset created by data imputation.
 
 ### {.tabset .tabset-fade .tabset-pills}
 Now we tried a couple of SVM with a different model on all columns of the data. We perform 10-fold cross-validation to see the training error and cross-validation error of each model.
 
 #### Linear kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+
 ```{r, message=FALSE}
 linearSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="vanilladot", cross = 10, scaled = TRUE)
 linearSVMclassifier
@@ -446,6 +453,7 @@ error
 ```
 #### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
 ```{r}
+
 polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
 polynomialSVMclassifier
 predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
@@ -462,7 +470,9 @@ error
 ```
 
 #### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
+
 ```{r message=FALSE}
+
 besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
 besselSVMclassifier
 predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
@@ -473,7 +483,9 @@ error
 </br>
 
 ###Training final SVM model
+
 Based on root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data without columns with many NA values. Therefore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
+
 Note: We split the data in ration 1:1 because on when we used more data the ksvm crashed on error due to not enough memory
 ####Preparing data for final SVM model
 ```{r}
@@ -488,13 +500,14 @@ traindDfWithoutPrice <- trainDf[-4]
 testDfWithoutPrice <- testDf[-4]
 ```
 
+
 ####Training the model
 ```{r final_SVM_model}
+
 radialSVMclassifier <- ksvm(Price ~ ., trainDf, kernel="rbfdot", cross = 10, scaled = TRUE)
 radialSVMclassifier
 predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
 error = postResample(testDf$Price, predictedPrice)
 error
 ```
-
 
