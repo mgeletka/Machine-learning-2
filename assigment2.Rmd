@@ -91,6 +91,15 @@ hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
 ```
 
 
+</br>
+  
+#### Summary of data
+```{r, eval=FALSE}
+  str(data)
+  summary(data)
+```
+
+
 ### Aggregating attributes and deriving new columns
 ```{r new-columns}
 aggregetaData <- function(data) {
