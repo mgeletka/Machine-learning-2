@@ -21,7 +21,6 @@ library(mice)
 library(GGally)
 library(geosphere)
 library(dplyr)
-<<<<<<< HEAD
 library(VIM)
 library(rpart) 
 library(rattle) 
@@ -60,11 +59,11 @@ aggr(dataOriginal,delimiter=NULL, plot=TRUE)
 
 ####Discard NA values of price
 ```{r}
-=======
+
 
 
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
->>>>>>> parent of 3be72d5... final changes
+
 dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
 ```
 
@@ -74,17 +73,13 @@ dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
 
 You can also embed plots, for example:
 
-<<<<<<< HEAD
-```{r dataComplete}
-=======
+
 ```{r}
->>>>>>> parent of 3be72d5... final changes
 set.seed(101) 
 init = mice(dataOriginal, maxit=0) 
 dataComplete <- complete(init)
 ```
 
-<<<<<<< HEAD
 We will decide later to use dataComplete or dataOriginal, according to each technique.
 
 
@@ -227,9 +222,8 @@ error<-sqrt((sum((test.data$Price-predictions)^2)))/nrow(test.data)
 difference <- predictions - test.data$Price
 bagg.r2 = cor(test.data$Price,predictions)^2
 bagg.rmse = sqrt(mean(difference^2))
-print(error)
 print(bagg.r2)
-print(rmse)
+print(bagg.rmse)
 ```
 
 
@@ -238,30 +232,33 @@ print(rmse)
 ```{r}
 B = 2000
 N = length(smallDataset[,1])
-=======
-####Deriving new columns
-```{r}
-getNthElemements <- function(lst, n){
-         sapply(lst, `[`, n)
+
+stor.r2 = rep(0,B)
+stor.rmse = rep(0,B)
+
+for(i in 1:B){
+  idx = sample(1:N,N,replace = TRUE)
+  newdata = smallDataset[idx,]
+  
+  model <- lm(Price~.,data = newdata)
+
+  stor.r2[i] <- summary(model)$r.squared
+  stor.rmse[i] <- sqrt(mean(model$residuals^2))
+  
 }
->>>>>>> parent of 3be72d5... final changes
-
-data <- transform(dataComplete,
-                  YearSaled =  as.numeric(getNthElemements(strsplit(as.character(Date), "/"), 3)),
-                  Street1 = factor(getNthElemements(strsplit(as.character(Address), " "), 2)),
-                  Street2 = factor(getNthElemements(strsplit(as.character(Address), " "), 3)))
-
-data <- within(data, Street <- paste(Street1, Street2,sep=' '))
-
-MelbourneCityCentre <- cbind(144.961865, -37.811289)
-data <- mutate(data, DistanceToCentre = distGeo(cbind(Longtitude, Lattitude), MelbourneCityCentre))
+hist(stor.r2,col = "orange")
+hist(stor.rmse,col = "purple")
+print(min(stor.rmse))
+print(max(stor.r2))
 ```
 
-</br>
+```{r}
+df<-data.frame(Methods=c('lm','bag','boost'),Rsquared=c(f$R2,bagg.r2,max(stor.r2)))
+barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2,
+ylim=c(0,0.7))
 
-<<<<<<< HEAD
 ```
-
 
 ```{r}
 df<-data.frame(Methods=c('lm','bag','boost'),Rsquared=c(f$RMSE,bagg.rmse,min(stor.rmse)))
@@ -270,7 +267,12 @@ cex.names=2,col='red',cex.axis=2)
 
 ```
 
-in the barplot we can see that the boosted model is the best one
+in the barplot we can see that the boosted model is the best one.
+
+
+
+</br>
+
 
 
 
@@ -632,4 +634,3 @@ error
 str(data)
 summary(data)
 ```
->>>>>>> parent of 3be72d5... final changes
