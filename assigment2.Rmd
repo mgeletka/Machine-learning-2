@@ -1,23 +1,22 @@
 ---
 title: "assignment2"
+author: "mgeletka"
 date: "May 7, 2020"
 output: html_document
 ---
 
 
-##Introduction
-The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning regression methods by comparing:
+## Introduction
+The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning
+regression methods by comparing:
 
+* regression
 * regression trees,
 * bagging,
 * random forest,
 *  kernel approaches
 
-</br>
-
-##Data pre-processing
-
-```{r, message=FALSE}
+```{r, warning=TRUE,message=False}
 library(mice)
 library(GGally)
 library(geosphere)
@@ -25,6 +24,8 @@ library(dplyr)
 library(VIM)
 library(rpart) 
 library(rattle) 
+library(l2boost)
+library(foreach)
 library(e1071)  
 library(caret)  
 library(gbm)  
@@ -42,9 +43,7 @@ library(kernlab)
 
 
 ```{r}
-
 dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
-
 ```
 
 
@@ -90,7 +89,6 @@ hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
 #### Logarithmic distribution
 ```{r histlogPrice}
 hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
-
 ```
 
 
@@ -106,7 +104,6 @@ hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
 ### Aggregating attributes and deriving new columns
 ```{r new-columns}
 aggregetaData <- function(data) {
-
   
   # Add year column and street column
   addresses<-gsub("[[:punct:]]", "", data$Address)
@@ -118,7 +115,7 @@ aggregetaData <- function(data) {
   newData <- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, "Spring",ifelse(month(newData$Date) %in% 6:8, "summer", ifelse(month(newData$Date) %in% 9:11, "Autumn","Winter"))))
   
   # Remove unuseful columns
-  newData<-select(newData,-c(Address,Date))
+  newData<-dplyr::select(newData,-c(Address,Date))
   
   # Add a column with the distance to the center of the bay
   MelbourneBayCentre <- cbind(144.783832, -38.104275)
@@ -136,10 +133,141 @@ aggregetaData <- function(data) {
   
    return(newData)
 }
-
 data <- aggregetaData(dataOriginal)
 dataComplete <- aggregetaData(dataComplete)
 ```
+
+
+## Linear regression
+
+### Create the train end test dataset
+
+
+
+We use smaller sample of our data.
+And create the training and test dataset, we need to use the dataComplete because the linear regression do not allow NA value in the dataset
+```{r}
+split = sample.split(dataComplete, SplitRatio = 0.5)
+smallDataset = subset(dataComplete, split == TRUE)
+split = sample.split(data, SplitRatio = 0.7)
+smallDatasetTrain = subset(smallDataset, split == TRUE)
+smallDatasetTest = subset(smallDataset, split == FALSE)
+
+
+```
+
+
+```{r}
+train.data <- sapply( smallDatasetTrain, as.numeric )
+test.data <- sapply(smallDatasetTest, as.numeric)
+smallDataset <- sapply(smallDataset, as.numeric)
+
+
+smallDataset <- data.frame(smallDataset)
+test.data <- data.frame(test.data)
+train.data <- data.frame(train.data)
+ytrain <- train.data[,"Price"]
+ytest <- test.data[,"Price"] 
+```
+
+
+##
+```{r}
+
+model <- lm(Price ~., data = train.data)
+
+predictions <- model %>% predict(test.data)
+f = data.frame(R2 = R2(predictions,test.data$Price),
+           MAE = MAE(predictions, test.data$Price),
+           RMSE = RMSE(predictions,test.data$Price))
+summary(f)
+```
+### Cross validation
+
+```{r}
+# Define training control
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+model <- train(Price ~., data = smallDataset, method = "lm",trControl = train.control)
+# Summarize the results
+r2.cross = summary(model)$r.squared
+```
+
+
+
+### Bagging
+
+```{r}
+length_divisor<-4
+iterations<-2000
+predictions<-foreach(m=1:iterations,.combine=cbind) %do% {
+  training_positions <-  sample(nrow(train.data),size=floor((nrow(train.data)/length_divisor)))
+  train_pos<-1:nrow(train.data) %in% training_positions
+
+  lm_fit<-lm(Price~. ,data=train.data)
+
+  predict(lm_fit,newdata=test.data)
+}
+
+
+predictions<-rowMeans(predictions)
+error<-sqrt((sum((test.data$Price-predictions)^2)))/nrow(test.data)
+difference <- predictions - test.data$Price
+bagg.r2 = cor(test.data$Price,predictions)^2
+bagg.rmse = sqrt(mean(difference^2))
+print(bagg.r2)
+print(bagg.rmse)
+```
+
+
+### Boosting
+
+```{r}
+B = 2000
+N = length(smallDataset[,1])
+
+stor.r2 = rep(0,B)
+stor.rmse = rep(0,B)
+
+for(i in 1:B){
+  idx = sample(1:N,N,replace = TRUE)
+  newdata = smallDataset[idx,]
+  newtestdata = test.data[idx,]
+  model <- lm(Price~.,data = newtestdata)
+  stor.r2[i] <- summary(model)$r.squared
+  stor.rmse[i] <- sqrt(mean(model$residuals^2))
+  
+}
+hist(stor.r2,col = "orange")
+hist(stor.rmse,col = "purple")
+
+```
+
+
+
+
+```{r}
+df<-data.frame(Methods=c('lm','bag','boost'),Rsquared=c(f$R2,bagg.r2,max(stor.r2)))
+barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2,
+ylim=c(0,0.7))
+
+```
+
+```{r}
+df<-data.frame(Methods=c('lm','bag','boost'),Rsquared=c(f$RMSE,bagg.rmse,min(stor.rmse)))
+barplot(df$Rsquared,ylab='RMSE',names.arg=df$Methods,
+cex.names=2,col='red',cex.axis=2)
+
+```
+
+in the barplot we can see that the boosted model is the best one.
+
+
+
+</br>
+
+
 
 
 ## Regression trees
@@ -170,15 +298,12 @@ for (i in seq(1:length(cp_vect))){
   RMSE.tree.train[i] <- sqrt(mean((pred.tree.train-ytrain)^2))
   Rsquared.tree[i] <- 1 - sum((pred.tree.test-ytest)^2)/sum((ytest-mean(ytest))^2)
 }
-
 # plot RMSE vs cp
 plot(cp_vect,RMSE.tree.test,type="l",col="red",xlab="cp",ylab="RMSE",main="RMSE")
 lines(cp_vect,RMSE.tree.train,col="blue")
 legend("bottomright",lty=1,col=c("red","blue"),legend = c("test ", "train "))
-
 # plot Rsquared vs cp
 plot(cp_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main="R^2")
-
 ```
 
 We can see that the smaller cp is, the better is the model (lower RMSE and higher Rsquared).
@@ -230,7 +355,6 @@ We can see that for a depth greater than 5 RMSE and R squared stay constant, so 
 This is the final model obtained through cross validation on the tuning parameter cp.
 ```{r}
 fancyRpartPlot(evaltree$finalModel)
-
 #RMSE and Rsquared of our final model
 rmse1 <- evaltree$results$RMSE[1]
 rs1 <- evaltree$results$Rsquared[1]
@@ -244,7 +368,6 @@ Now we want to see if we can improve the model with bagging and boosting.
 ### Bagging
 ```{r bagging_tree}
 evaltreebag <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="treebag") #it takes like 5 minutes to run
-
 # R squared
 rs2<-evaltreebag$results$Rsquared
 # RMSE
@@ -259,7 +382,6 @@ councarea<-gsub(pattern = "\\s",
      replacement = "",
      x = councarea)
 dataComplete$CouncilArea<-as.factor(councarea)
-
 regionnames<-lapply(dataComplete$Regionname, as.character)
 regionnames<-gsub(pattern = "\\s",   
      replacement = "",
@@ -271,7 +393,6 @@ dataComplete$Regionname<-regionnames
 
 ```{r boosting_tree}
 evaltreeboost <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="blackboost") #takes 35/40 minutes to run D:
-
 # R squared
 rs3<-evaltreeboost$results$Rsquared[9]
 # RMSE
@@ -279,11 +400,9 @@ rmse3<-evaltreeboost$results$RMSE[9]
 ```
 
 ```{r}
-
 # Let's see with Cross Validation what are the best tuning paramenters for boosting
 plot(evaltreeboost)
 evaltreeboost$bestTune
-
 ```
 
 ### Final comparison
@@ -293,34 +412,28 @@ df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rs1,rs2,rs3
 barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
 cex.names=2,col='blue',cex.axis=2,
 ylim=c(0,1))
-
 df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rmse1,rmse2,rmse3))
 barplot(df$Rsquared,ylab='RMSE',names.arg=df$Methods,
 cex.names=2,col='blue',cex.axis=2)
-
 ```
 
 We can see that the boosted model is the best one, with the highest R squared and the smallest RMSE.
 
 
 
-##Support Vector Machine (SVM)
+## Support Vector Machine (SVM)
 
 </br>
 
-####Small dataset
+#### Small dataset
 We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.
 ```{r small_dataset}
 set.seed(123)
-
 split = sample.split(dataComplete, SplitRatio = 0.01)
 smallDataset = subset(dataComplete, split == TRUE)
-
-
 split = sample.split(data, SplitRatio = 0.7)
 smallDatasetTrain = subset(smallDataset, split == TRUE)
 smallDatasetTest = subset(smallDataset, split == FALSE)
-
 traindDfWithoutPrice <- smallDatasetTrain[-4]
 testDfWithoutPrice <- smallDatasetTest[-4]
 ```
@@ -402,7 +515,7 @@ error = postResample(smallDatasetTest$Price, predictedPrice)
 error
 ```
 
-###Removing columns with too much NA values in original data
+### Removing columns with too much NA values in original data
 ### {.tabset .tabset-fade .tabset-pills}
 Now we try to remove columns which have many NA values. So we remove the columns Bedroom2, Car, YearBuild and lattitude and longtitide. Then we perform 10-fold cross validation to see the training error and cross validation error of each model on those reduced dataset.
 ```{r}
@@ -453,7 +566,6 @@ error
 ```
 #### Polynomial kernel classifier of degree 8 {.tabset .tabset-fade .tabset-pills}
 ```{r}
-
 polynomialSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="polydot", kpar = list(degree=8), cross = 10, scaled = TRUE)
 polynomialSVMclassifier
 predictedPrice = predict(polynomialSVMclassifier, testDfWithoutPrice)
@@ -472,7 +584,6 @@ error
 #### Bessel kernel classifier of the classifier {.tabset .tabset-fade .tabset-pills}
 
 ```{r message=FALSE}
-
 besselSVMclassifier <- ksvm(Price ~ ., smallDatasetTrain, kernel="besseldot", cross = 10, scaled = TRUE)
 besselSVMclassifier
 predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
@@ -482,32 +593,38 @@ error
 
 </br>
 
-###Training final SVM model
+### Training final SVM model
 
 Based on root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data without columns with many NA values. Therefore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
 
 Note: We split the data in ration 1:1 because on when we used more data the ksvm crashed on error due to not enough memory
-####Preparing data for final SVM model
+#### Preparing data for final SVM model
 ```{r}
 split = sample.split(data, SplitRatio = 0.5)
 trainDf = subset(dataComplete, split == TRUE)
 testDf = subset(dataComplete, split == FALSE)
-
 trainDf <- trainDf[-c(9,11,14,16,17)]
 testDf <- testDf[-c(9,11,14,16,17)]
-
 traindDfWithoutPrice <- trainDf[-4]
 testDfWithoutPrice <- testDf[-4]
 ```
 
 
-####Training the model
+#### Training the model
 ```{r final_SVM_model}
-
 radialSVMclassifier <- ksvm(Price ~ ., trainDf, kernel="rbfdot", cross = 10, scaled = TRUE)
 radialSVMclassifier
 predictedPrice = predict(radialSVMclassifier, testDfWithoutPrice)
 error = postResample(testDf$Price, predictedPrice)
 error
 ```
+</br>
 
+
+### Final thoughts
+
+After testing the different techniques seen in the classroom we can see some aspects:
+in the two ensemble approaches (linear regression and regression tree)
+the best model is obtained by using the boosting technique.
+Between the two ensemble method as we can expect the regression tree obtain a better result, this outcome is for the nature of the method, the regression tree works particularly well with a dataset of these amount of variables and features.
+The biggest difference between the two class of method is that SVM uses the kernel trick to turn a linearly nonseparable problem into a linearly separable one, while ensemble methods split the input space into hyper-rectangles according to the target.
