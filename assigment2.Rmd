@@ -6,7 +6,7 @@ output: html_document
 ---
 
 
-##Introduction
+## Introduction
 The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning
 regression methods by comparing:
 
@@ -16,7 +16,7 @@ regression methods by comparing:
 * random forest,
 *  kernel approaches
 
-```{r}
+```{r, warning=TRUE,message=False}
 library(mice)
 library(GGally)
 library(geosphere)
@@ -24,6 +24,7 @@ library(dplyr)
 library(VIM)
 library(rpart) 
 library(rattle) 
+library(l2boost)
 library(foreach)
 library(e1071)  
 library(caret)  
@@ -59,29 +60,20 @@ aggr(dataOriginal,delimiter=NULL, plot=TRUE)
 
 ####Discard NA values of price
 ```{r}
-
-
-
-dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
-
 dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
 ```
-
-</br>
 
 ####Replacing NA values
 
 You can also embed plots, for example:
 
-
-```{r}
+```{r dataComplete}
 set.seed(101) 
 init = mice(dataOriginal, maxit=0) 
 dataComplete <- complete(init)
 ```
 
 We will decide later to use dataComplete or dataOriginal, according to each technique.
-
 
 
 </br
@@ -123,7 +115,7 @@ aggregetaData <- function(data) {
   newData <- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, "Spring",ifelse(month(newData$Date) %in% 6:8, "summer", ifelse(month(newData$Date) %in% 9:11, "Autumn","Winter"))))
   
   # Remove unuseful columns
-  newData<-select(newData,-c(Address,Date))
+  newData<-dplyr::select(newData,-c(Address,Date))
   
   # Add a column with the distance to the center of the bay
   MelbourneBayCentre <- cbind(144.783832, -38.104275)
@@ -145,13 +137,16 @@ data <- aggregetaData(dataOriginal)
 dataComplete <- aggregetaData(dataComplete)
 ```
 
+
 ## Linear regression
 
 ### Create the train end test dataset
 
+
+
+We use smaller sample of our data.
+And create the training and test dataset, we need to use the dataComplete because the linear regression do not allow NA value in the dataset
 ```{r}
-
-
 split = sample.split(dataComplete, SplitRatio = 0.5)
 smallDataset = subset(dataComplete, split == TRUE)
 split = sample.split(data, SplitRatio = 0.7)
@@ -171,33 +166,31 @@ smallDataset <- sapply(smallDataset, as.numeric)
 smallDataset <- data.frame(smallDataset)
 test.data <- data.frame(test.data)
 train.data <- data.frame(train.data)
+ytrain <- train.data[,"Price"]
+ytest <- test.data[,"Price"] 
 ```
 
 
-
+##
 ```{r}
 
 model <- lm(Price ~., data = train.data)
-
 
 predictions <- model %>% predict(test.data)
 f = data.frame(R2 = R2(predictions,test.data$Price),
            MAE = MAE(predictions, test.data$Price),
            RMSE = RMSE(predictions,test.data$Price))
+summary(f)
 ```
 ### Cross validation
 
 ```{r}
 # Define training control
-set.seed(123) 
 train.control <- trainControl(method = "cv", number = 10)
 # Train the model
 model <- train(Price ~., data = smallDataset, method = "lm",trControl = train.control)
 # Summarize the results
 r2.cross = summary(model)$r.squared
-rmse.cross = summary(model)$rmse
-rmse.cross
-summary(model)
 ```
 
 
@@ -206,7 +199,7 @@ summary(model)
 
 ```{r}
 length_divisor<-4
-iterations<-1000
+iterations<-2000
 predictions<-foreach(m=1:iterations,.combine=cbind) %do% {
   training_positions <-  sample(nrow(train.data),size=floor((nrow(train.data)/length_divisor)))
   train_pos<-1:nrow(train.data) %in% training_positions
@@ -239,18 +232,19 @@ stor.rmse = rep(0,B)
 for(i in 1:B){
   idx = sample(1:N,N,replace = TRUE)
   newdata = smallDataset[idx,]
-  
-  model <- lm(Price~.,data = newdata)
-
+  newtestdata = smallDatasetTest[idx,]
+  model <- lm(Price~.,data = newtestdata)
   stor.r2[i] <- summary(model)$r.squared
   stor.rmse[i] <- sqrt(mean(model$residuals^2))
   
 }
 hist(stor.r2,col = "orange")
 hist(stor.rmse,col = "purple")
-print(min(stor.rmse))
-print(max(stor.r2))
+
 ```
+
+
+
 
 ```{r}
 df<-data.frame(Methods=c('lm','bag','boost'),Rsquared=c(f$R2,bagg.r2,max(stor.r2)))
@@ -427,11 +421,11 @@ We can see that the boosted model is the best one, with the highest R squared an
 
 
 
-##Support Vector Machine (SVM)
+## Support Vector Machine (SVM)
 
 </br>
 
-####Small dataset
+#### Small dataset
 We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.
 ```{r small_dataset}
 set.seed(123)
@@ -521,7 +515,7 @@ error = postResample(smallDatasetTest$Price, predictedPrice)
 error
 ```
 
-###Removing columns with too much NA values in original data
+### Removing columns with too much NA values in original data
 ### {.tabset .tabset-fade .tabset-pills}
 Now we try to remove columns which have many NA values. So we remove the columns Bedroom2, Car, YearBuild and lattitude and longtitide. Then we perform 10-fold cross validation to see the training error and cross validation error of each model on those reduced dataset.
 ```{r}
@@ -599,12 +593,12 @@ error
 
 </br>
 
-###Training final SVM model
+### Training final SVM model
 
 Based on root mean square error best model from all kernel and used data was SVM model with radial kernel, trained on data without columns with many NA values. Therefore we now train this model on the whole train dataset. And use the 10-fold cross validation to see the RMSE on the whole dataset.
 
 Note: We split the data in ration 1:1 because on when we used more data the ksvm crashed on error due to not enough memory
-####Preparing data for final SVM model
+#### Preparing data for final SVM model
 ```{r}
 split = sample.split(data, SplitRatio = 0.5)
 trainDf = subset(dataComplete, split == TRUE)
@@ -616,7 +610,7 @@ testDfWithoutPrice <- testDf[-4]
 ```
 
 
-####Training the model
+#### Training the model
 ```{r final_SVM_model}
 radialSVMclassifier <- ksvm(Price ~ ., trainDf, kernel="rbfdot", cross = 10, scaled = TRUE)
 radialSVMclassifier
@@ -627,10 +621,10 @@ error
 </br>
 
 
+### Final thoughts
 
-=======
-#### Summary of data
-```{r}
-str(data)
-summary(data)
-```
+After testing the different techniques seen in the classroom we can see some aspects:
+in the two ensemble approaches (linear regression and regression tree)
+the best model is obtained by using the boosting technique.
+Between the two ensemble method as we can expect the regression tree obtain a better result, this outcome is for the nature of the method, the regression tree works particularly well with a dataset of these amount of variables and features.
+The biggest difference between the two class of method is that SVM uses the kernel trick to turn a linearly nonseparable problem into a linearly separable one, while ensemble methods split the input space into hyper-rectangles according to the target.
