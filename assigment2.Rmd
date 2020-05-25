@@ -1,14 +1,14 @@
 ---
-title: "assignment2"
-author: "mgeletka"
-date: "May 7, 2020"
+title: "Machine Learning, 2019/2020 - Assignment 2"
+author: "Martin Geletka, Alessandra Crippa, Giulio Rago"
+date: "May 25, 2020"
 output: html_document
 ---
 
 
 ## Introduction
-The purpose of this assignment is t is to learn the main advantages and disadvantages of some machine learning
-regression methods by comparing:
+The purpose of this assignment is to learn the main advantages and disadvantages of machine learning
+regression methods, such as:
 
 * regression
 * regression trees,
@@ -16,7 +16,12 @@ regression methods by comparing:
 * random forest,
 *  kernel approaches
 
-```{r, warning=TRUE,message=False}
+In this assignment, we will try to find the best hyperparameters for the given dataset. After finding the best models for each method
+we compare all trained models by computed mean square error.
+
+At the end of this assignment, we discuss the advantages and disadvantages of each method and choose the recommended approach for the given dataset.
+
+```{r, warning=FALSE,message=False, echo=FALSE}
 library(mice)
 library(GGally)
 library(geosphere)
@@ -40,68 +45,78 @@ library(Metrics)
 library(kernlab)
 ```
 
-
-
-```{r}
-dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
-```
-
-
+## Preprocessing the data
+We start with reading the data from the CSV file and to better to work with the Date column we converted it to R Date type.
 ```{r, echo=FALSE}
-# Fix date format
+dataOriginal <- read.csv("Melbourne_housing_FULL.csv", header = TRUE, na.strings=c("", "NA", "#N/A"))
 dataOriginal$Date<-as.Date(dataOriginal$Date, "%d/%m/%Y")
 ```
 
+### Summary of the data
+To see the type of each column we call the str function on the original data. To see overview - mainly the range and number of NA vaues of each colum we called the summary. 
+
+```{r, eval=FALSE}
+  str(dataOriginal)
+  summary(dataOriginal)
+```
+
 ### NA values
-Let's visualize NA values
+Firstly to get a summary of the data, we visualize how a significant proportion of each column contains NA values. And then do it by all combinations of the columns. We see that the Landsize and YearBuilt have more than 50% of NA values. Other columns with considerable many NA values are Price, Bedroom2, Lattitude, Longitude.
 ```{r NAvizualisation}
-aggr(dataOriginal,delimiter=NULL, plot=TRUE)
+aggr(dataOriginal, plot=TRUE)
 ```
 
 ####Discard NA values of price
+Because we did not find any useful usage for the rows with NA values of the column Price, we removed them.
 ```{r}
 dataOriginal <- dataOriginal[!is.na(dataOriginal$Price),]
 ```
 
 ####Replacing NA values
+We also created data without NA values by using the package MICE. We use the default imputation methods, the pmm (predictive mean matching) for the numeric columns and polyreg(polytomous regression) for the factor columns, as shown in the summary. 
 
-You can also embed plots, for example:
+In each method, we will then decide if it is more suitable to use dataComplete or dataOriginal.
+
 
 ```{r dataComplete}
 set.seed(101) 
-init = mice(dataOriginal, maxit=0) 
+init = mice(dataOriginal, maxit=0)
+summary(init)
 dataComplete <- complete(init)
 ```
 
-We will decide later to use dataComplete or dataOriginal, according to each technique.
+</br>
 
+### Exploring the target variable
+Now we explore the distrution of the target varible Price. We visualize the histogram of this column in linear and also logarithmic scale and see that the its 
+distrubion reminds the power-law. 
 
-</br
-
-### The target variable
-
-#### Distribution
+#### Linear Distribution
 
 ```{r histPrice}
-hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="A$")
+hist(dataOriginal$Price,col=4, main=paste("Price"), xlab="Price")
 ```
 
 #### Logarithmic distribution
 ```{r histlogPrice}
-hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="log10(A$)")
+hist(log10(dataOriginal$Price),col=5, main=paste("Price"),xlab="Price")
 ```
 
 
 </br>
   
-#### Summary of data
-```{r, eval=FALSE}
-  str(data)
-  summary(data)
-```
 
 
 ### Aggregating attributes and deriving new columns
+Here we created some additional columns which we think may be relevant to the Price prediction.
+Created columns:
+  * Street - from the column Adress we take an only string containing the street (then we used this column instead of the address)
+  * Season - the season of the year taken from the column Data
+  * YearSold - only the year of the column Date
+  * MelbourneBayCentre - to approximate the distance to the beach we create the column of air distance to the middle of the Bay in Melbourne (location taken from Google Maps)
+  * DistanceToAirports - to approximate the distance to the nearest airport we calculate minimal air-distance to the 4 Melbourne airports (location taken from Google Maps)
+
+
 ```{r new-columns}
 aggregetaData <- function(data) {
   
@@ -109,12 +124,11 @@ aggregetaData <- function(data) {
   addresses<-gsub("[[:punct:]]", "", data$Address)
   addresses<-gsub("[[:digit:]]", "", addresses)
   
-  newData<-mutate(data, YearSaled=year(dataOriginal$Date))  
+  newData<-mutate(data, YearSold=year(dataOriginal$Date))  
   
   # Add season column
   newData <- mutate(newData, Season=ifelse(month(newData$Date) %in% 3:5, "Spring",ifelse(month(newData$Date) %in% 6:8, "summer", ifelse(month(newData$Date) %in% 9:11, "Autumn","Winter"))))
   
-  # Remove unuseful columns
   newData<-dplyr::select(newData,-c(Address,Date))
   
   # Add a column with the distance to the center of the bay
@@ -141,11 +155,7 @@ dataComplete <- aggregetaData(dataComplete)
 ## Linear regression
 
 ### Create the train end test dataset
-
-
-
-We use smaller sample of our data.
-And create the training and test dataset, we need to use the dataComplete because the linear regression do not allow NA value in the dataset
+We firsly created smaller dataset for quick development and tuning of the hyperaparameters. We used dataComplete because the linear regression do not allow NA value in it's computations.
 ```{r}
 split = sample.split(dataComplete, SplitRatio = 0.5)
 smallDataset = subset(dataComplete, split == TRUE)
@@ -170,8 +180,11 @@ ytrain <- train.data[,"Price"]
 ytest <- test.data[,"Price"] 
 ```
 
+</br>
 
-##
+### Simple linear model
+Firsly we created the simple linear model for predicting the column Price based on all other columns. After that we calculated R-squared, mean absolute error and root mean square error. Later on we compare the result from this simple model to see the effectss of the boosting and bagging.
+
 ```{r}
 
 model <- lm(Price ~., data = train.data)
@@ -183,7 +196,7 @@ f = data.frame(R2 = R2(predictions,test.data$Price),
 summary(f)
 ```
 ### Cross validation
-
+ALLESSANDRA  PLEASE EXPLAIN YOURSELF ??? TODO
 ```{r}
 # Define training control
 train.control <- trainControl(method = "cv", number = 10)
@@ -196,19 +209,16 @@ r2.cross = summary(model)$r.squared
 
 
 ### Bagging
-
+Now we will see the effect of bagging on this simple linear model. Then we will compute the R-squared and root mean square error to see the effect of the bagging.
 ```{r}
 length_divisor<-4
 iterations<-2000
 predictions<-foreach(m=1:iterations,.combine=cbind) %do% {
   training_positions <-  sample(nrow(train.data),size=floor((nrow(train.data)/length_divisor)))
   train_pos<-1:nrow(train.data) %in% training_positions
-
   lm_fit<-lm(Price~. ,data=train.data)
-
   predict(lm_fit,newdata=test.data)
 }
-
 
 predictions<-rowMeans(predictions)
 error<-sqrt((sum((test.data$Price-predictions)^2)))/nrow(test.data)
@@ -221,7 +231,7 @@ print(bagg.rmse)
 
 
 ### Boosting
-
+Now we will see the effect of boosting. Then we will plot the the histogram of the R-squared and root mean square error to see how they are distributed. ALLESSANDRA TODO WHY the plots?
 ```{r}
 B = 2000
 N = length(smallDataset[,1])
@@ -238,13 +248,17 @@ for(i in 1:B){
   stor.rmse[i] <- sqrt(mean(model$residuals^2))
   
 }
-hist(stor.r2,col = "orange")
-hist(stor.rmse,col = "purple")
+
+hist(stor.r2,col = "orange", main=paste("R-squared"),  xlab="R-squared")
+hist(stor.rmse,col = "purple", main=paste("Root Mean Square Error"), xlab="Root Mean Square Error")
 
 ```
 
+</br> 
 
 
+###Comparing the effect of boosting and bagging
+Now we compare the effect of boosting and bagging and by plotting the R-square and RMSE of each model.
 
 ```{r}
 df<-data.frame(Methods=c('lm','bag','boost'),Rsquared=c(f$R2,bagg.r2,max(stor.r2)))
@@ -261,13 +275,9 @@ cex.names=2,col='red',cex.axis=2)
 
 ```
 
-in the barplot we can see that the boosted model is the best one.
-
-
+From these barplots we see that the model using boosting has best performance on this particular problem. The reason is that te boosting model has the highest R-squared value and lowest RMSE from all models.
 
 </br>
-
-
 
 
 ## Regression trees
@@ -284,6 +294,7 @@ ytest <- data.test[,"Price"]
 
 
 ### Training the tree regression model with different cp value
+We train the refression tree with differen value complexity parameter to find out the effect of this parameter on the final model.
 
 ```{r tree_different_cp}
 cp_vect<-seq(0.001,0.3,(0.3-0.001)/30)
@@ -308,9 +319,11 @@ plot(cp_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main
 
 We can see that the smaller cp is, the better is the model (lower RMSE and higher Rsquared).
 
+
+### Cross-validation
 Let's apply 10-fold cross validation to confirm it.
 
-We had to remove the columns of Suburbs and Sellers to run a later part of the code (bagging and boosting), so we remove those columns from here in order to make a comparison between the different techniques. The information of Suburbs is already contained in the latitude and longitude, and we saw that Sellers are not that significative in our model.
+We had to remove the columns of Suburbs and Sellers to run a later part of the code (bagging and boosting), so we remove those columns from here in order to make a comparison between the different techniques. 
 ```{r CVtree_tuning_cp, warning=FALSE}
 train_control <- trainControl(method="cv", number=10)
 evaltree <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="rpart",tuneLength = 10)
@@ -319,7 +332,7 @@ evaltree$bestTune
 
 ### Training the tree regression model with different max.depth values
 
-Now we want to see how different values of max.depth affect our tree regression model.
+Now we want to see how different values of max.depth affect our tree regression model. We also plot the of RMSE an R-squared to see the effect of the parameter of max.depth to the model.
 ```{r tree_different_depth}
 # learn a tree regression model with different values of max.depth, and the best cp value found before
 depth_vect <- seq (1,30,1)
@@ -348,7 +361,7 @@ legend("bottomright",lty=1,col=c("red","blue"),legend = c("test ", "train "))
 plot(depth_vect,Rsquared.tree,type="l",col="blue", xlab="cp",ylab="R squared", main="R^2")
 ```
 
-We can see that for a depth greater than 5 RMSE and R squared stay constant, so it's fine to keep the default value max.depth=30.
+We can see that for a depth greater than 5 RMSE and R squared converge. Because of that we decided to keep the default value max.depth=30.
 
 ### Final standard tree regression model
 </br>
@@ -366,8 +379,9 @@ Now we want to see if we can improve the model with bagging and boosting.
 
 
 ### Bagging
+We tried the effect of bagging and computed the RMSE and R-squared to compare with other models.
 ```{r bagging_tree}
-evaltreebag <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="treebag") #it takes like 5 minutes to run
+evaltreebag <- train(Price~., data=dataComplete[,-c(1,6)], trControl=train_control, method="treebag") 
 # R squared
 rs2<-evaltreebag$results$Rsquared
 # RMSE
@@ -375,6 +389,7 @@ rmse2<-evaltreebag$results$RMSE
 ```
 
 ### Boosting
+We tried the effect of boosting and computed the RMSE and R-squared to compare with other models.
 ```{r boosting_tree_pb_solution, echo=FALSE}
 #problem risolution
 councarea<-lapply(dataComplete$CouncilArea, as.character)
@@ -406,7 +421,7 @@ evaltreeboost$bestTune
 ```
 
 ### Final comparison
-Now we can compare regression trees, bagged regression trees, boosted regression trees.
+Now we can compare regression trees, bagged regression trees, boosted regression trees, based on the computed values of R-squared and RMSE.
 ```{r comparison_tree_models}
 df<-data.frame(Methods=c('rpart','bag tree','boost tree'),Rsquared=c(rs1,rs2,rs3))
 barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
@@ -417,19 +432,19 @@ barplot(df$Rsquared,ylab='RMSE',names.arg=df$Methods,
 cex.names=2,col='blue',cex.axis=2)
 ```
 
-We can see that the boosted model is the best one, with the highest R squared and the smallest RMSE.
+We can see from the barplot that the boosted model is the best one, with the highest R squared and the smallest RMSE.
 
-
+</br>
 
 ## Support Vector Machine (SVM)
 
 </br>
 
 #### Small dataset
-We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model.
+We created smaller sample of the data in purpose of the tuning of the hyperparameter of the model. Otherwise finding these parameters would took too much time, because of the high computation time, which take SVM fitting fuction. 
 ```{r small_dataset}
 set.seed(123)
-split = sample.split(dataComplete, SplitRatio = 0.01)
+split = sample.split(dataComplete, SplitRatio = 0.1)
 smallDataset = subset(dataComplete, split == TRUE)
 split = sample.split(data, SplitRatio = 0.7)
 smallDatasetTrain = subset(smallDataset, split == TRUE)
@@ -442,7 +457,7 @@ testDfWithoutPrice <- smallDatasetTest[-4]
 
 
 
-Although the method ksvm does not fail when given NA value, internally is omitting them and learning anything from them. So with SVM, we used the complete dataset created by data imputation.
+Although the method ksvm does not fail when given NA value, internally is omitting them and not learning anything from them. So with SVM, we used the complete dataset created by data imputation.
 
 ### {.tabset .tabset-fade .tabset-pills}
 Now we tried a couple of SVM with a different model on all columns of the data. We perform 10-fold cross-validation to see the training error and cross-validation error of each model.
@@ -514,6 +529,8 @@ predictedPrice = predict(besselSVMclassifier, testDfWithoutPrice)
 error = postResample(smallDatasetTest$Price, predictedPrice)
 error
 ```
+
+</br>
 
 ### Removing columns with too much NA values in original data
 ### {.tabset .tabset-fade .tabset-pills}
@@ -591,7 +608,9 @@ error = postResample(smallDatasetTest$Price, predictedPrice)
 error
 ```
 
+
 </br>
+
 
 ### Training final SVM model
 
@@ -621,10 +640,28 @@ error
 </br>
 
 
-### Final thoughts
-
+## Comparing SVM with ensemble approaches
 After testing the different techniques seen in the classroom we can see some aspects:
 in the two ensemble approaches (linear regression and regression tree)
 the best model is obtained by using the boosting technique.
 Between the two ensemble method as we can expect the regression tree obtain a better result, this outcome is for the nature of the method, the regression tree works particularly well with a dataset of these amount of variables and features.
 The biggest difference between the two class of method is that SVM uses the kernel trick to turn a linearly nonseparable problem into a linearly separable one, while ensemble methods split the input space into hyper-rectangles according to the target.
+
+
+## Final recommended approach
+Now we can compare the obtained values of R-squared and RMSE of the best developed models from each techniques. For visualize the particaluar values of each model in barplot and compare. We see that the Tree approach and SVM model has comparable results. But the SVM approach is slightly better and therefore recommenced by us for this particular problem. 
+```{r}
+df<-data.frame(Methods=c('Linear mod.','Trees','SVM'),Rsquared=c(0.5424989, 7.24531e-01,7.344281e-01))
+barplot(df$Rsquared,ylab='R-square',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2,
+ylim=c(0,1))
+
+df<-data.frame(Methods=c('Linear mod.','Trees','SVM'), RMSE=c(447438, 3.586482e+05, 3.375243e+05))
+barplot(df$RMSE,ylab='RMSE',names.arg=df$Methods,
+cex.names=2,col='blue',cex.axis=2)
+```
+
+</br>
+
+## Conclusion
+In this assignment, we get in touch with different techniques for dealing with regression problems. Firstly we learned and came up with some methods of how to aggregate spatial data, like computing the distances for some significant points. Then we saw the effect of bagging and boosting both on regression trees and linear models. Then we saw that the finding of the best kernel function for the SVM method it's not always easy and does not need to be intuitive for the first time and this can be one of the biggest disadvantages of the SVM approach. We also saw that this choice of the kernel function has a significant impact on the performance of the final model and therefore we should compare different .  And finally, we came up with the recommended approach by comparing the obtained R-squared and RMSE of each computed model.
